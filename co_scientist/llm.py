@@ -53,8 +53,16 @@ def call_json(prompt: str, *, system: str = "", model: str | None = None,
     raw = call(fenced_prompt, system=system, model=model,
                max_tokens=max_tokens, temperature=temperature)
 
+    # Prefer a fully-closed ```json ... ``` block; tolerate truncated/unfenced
+    # output by falling back to brace-matched JSON inside `raw`.
     match = re.search(r"```(?:json)?\s*(.+?)```", raw, re.DOTALL)
-    payload = match.group(1).strip() if match else raw.strip()
+    if match:
+        payload = match.group(1).strip()
+    else:
+        first = next((i for i, c in enumerate(raw) if c in "{["), -1)
+        last = max(raw.rfind("}"), raw.rfind("]"))
+        payload = (raw[first:last + 1].strip()
+                   if first >= 0 and last > first else raw.strip())
     try:
         return json.loads(payload)
     except json.JSONDecodeError as e:

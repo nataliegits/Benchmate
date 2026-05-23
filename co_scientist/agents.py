@@ -148,9 +148,9 @@ def ranking(state: CoScientistState) -> dict[str, Any]:
             f"B: {b.statement}\n   rationale: {b.rationale}\n\n"
             f"Evaluation criteria: {crit_str}\n\n"
             "Output JSON: {\"winner\": \"A\" | \"B\" | \"draw\", "
-            "\"reason\": \"one sentence\"}"
+            "\"reason\": \"one sentence under 40 words\"}"
             + _addendum(state),
-            system=SYSTEM_BASE, temperature=0.2, max_tokens=200,
+            system=SYSTEM_BASE, temperature=0.2, max_tokens=500,
         )
         if verdict["winner"] == "A":
             update_elo(a, b)
