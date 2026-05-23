@@ -1,0 +1,1 @@
+"""Co-Scientist starter package."""
