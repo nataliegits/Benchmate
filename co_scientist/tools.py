@@ -2,6 +2,7 @@
 
 Real:
     - PubMed search (NCBI E-utilities, no key required)
+    - Geneformer perturbation lookup (reads pre-computed CSVs)
 
 Stubbed:
     - BioNeMo NIM call (uncomment when you have an endpoint)
@@ -13,6 +14,7 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -102,6 +104,97 @@ def cosine(a: list[float], b: list[float]) -> float:
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     return dot / (na * nb + 1e-9)
+
+
+# ============================================================
+# Geneformer in-silico perturbation lookup
+# ============================================================
+#
+# Reads pre-computed perturbation result CSVs produced by notebook 02.
+# Place each gene's *_stats.csv in data/geneformer/ at the repo root.
+# The lookup is fast (just a pandas read + filter), so the Generation and
+# Reflection agents can call it inline during the supervisor loop.
+
+GENEFORMER_DIR = Path(__file__).resolve().parent.parent / "data" / "geneformer"
+
+
+def available_geneformer_genes() -> list[str]:
+    """List gene symbols with cached perturbation results."""
+    if not GENEFORMER_DIR.exists():
+        return []
+    return sorted(p.stem.replace("_stats", "")
+                  for p in GENEFORMER_DIR.glob("*_stats.csv"))
+
+
+def geneformer_neighbors(gene_symbol: str, top_n: int = 20,
+                         min_detections: int = 200) -> dict:
+    """Top-N genes whose embedding shifted most when `gene_symbol` was deleted.
+
+    Returns a dict with keys:
+        gene_symbol     — query gene
+        n_results       — number of affected genes returned
+        affected_genes  — list of {symbol, ensembl_id, cosine_shift, n_detections}
+    or {"error": "..."} if the gene isn't in the cache.
+
+    cosine_shift = 1 - cosine_sim_mean, so larger = bigger predicted effect.
+    """
+    path = GENEFORMER_DIR / f"{gene_symbol}_stats.csv"
+    if not path.exists():
+        return {"error": f"No cached Geneformer results for {gene_symbol}. "
+                         f"Available: {available_geneformer_genes()}"}
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return {"error": "pandas not installed; pip install pandas"}
+
+    df = pd.read_csv(path)
+    if "Affected" in df.columns:
+        df = df[df["Affected"] != "cell_emb"]
+    df = df.dropna(subset=["Affected_Ensembl_ID"])
+    if "N_Detections" in df.columns:
+        df = df[df["N_Detections"] >= min_detections]
+    df = df.sort_values("Cosine_sim_mean", ascending=True).head(top_n)
+
+    return {
+        "gene_symbol": gene_symbol,
+        "n_results": len(df),
+        "affected_genes": [
+            {"symbol": row.get("Affected_gene_name"),
+             "ensembl_id": row["Affected_Ensembl_ID"],
+             "cosine_shift": round(1 - row["Cosine_sim_mean"], 4),
+             "n_detections": int(row.get("N_Detections", 0))}
+            for _, row in df.iterrows()
+        ],
+    }
+
+
+def geneformer_intersect(gene_symbols: list[str], top_n: int = 200,
+                         min_detections: int = 200) -> dict:
+    """Genes affected under ALL of the listed perturbations.
+
+    Returns {perturbations, n_shared, shared_genes:[{symbol, ensembl_id}]}.
+    """
+    sets: dict[str, dict[str, dict]] = {}
+    for g in gene_symbols:
+        r = geneformer_neighbors(g, top_n=top_n, min_detections=min_detections)
+        if "error" in r:
+            return r
+        sets[g] = {ag["ensembl_id"]: ag for ag in r["affected_genes"]}
+
+    if not sets:
+        return {"perturbations": gene_symbols, "n_shared": 0, "shared_genes": []}
+
+    shared_ids = set.intersection(*[set(s.keys()) for s in sets.values()])
+    first = next(iter(sets.values()))
+    return {
+        "perturbations": gene_symbols,
+        "n_shared": len(shared_ids),
+        "shared_genes": [
+            {"symbol": first[eid]["symbol"], "ensembl_id": eid}
+            for eid in shared_ids
+        ],
+    }
 
 
 # ============================================================

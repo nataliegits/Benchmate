@@ -6,6 +6,7 @@ LangGraph merges them back into state.
 from __future__ import annotations
 
 import random
+import re
 from typing import Any
 
 from .elo import schedule_matches, update_elo
@@ -13,7 +14,10 @@ from .llm import call, call_json
 from .state import (
     CoScientistState, Hypothesis, MetaCritique, INITIAL_ELO,
 )
-from .tools import pubmed_search, embed, cosine
+from .tools import (
+    pubmed_search, embed, cosine,
+    available_geneformer_genes, geneformer_neighbors,
+)
 
 
 SYSTEM_BASE = (
@@ -28,6 +32,35 @@ def _addendum(state: CoScientistState) -> str:
     'learning without backprop' mechanism from the paper."""
     crit = state.get("meta_critique")
     return crit.as_prompt_addendum() if crit else ""
+
+
+def _geneformer_context_for(text: str, top_n: int = 10) -> str:
+    """Find genes mentioned in `text` that we have cached perturbation data for,
+    and format their top affected genes as a prompt-ready evidence block.
+
+    Returns "" if no relevant genes are mentioned or no data is available.
+    """
+    available = available_geneformer_genes()
+    if not available:
+        return ""
+    mentioned = [g for g in available if re.search(rf"\b{re.escape(g)}\b", text)]
+    if not mentioned:
+        return ""
+    blocks = []
+    for sym in mentioned:
+        r = geneformer_neighbors(sym, top_n=top_n)
+        if "error" in r or not r.get("affected_genes"):
+            continue
+        lines = [
+            f"  {ag['symbol']:>10}  Δcos={ag['cosine_shift']:.3f}  N={ag['n_detections']}"
+            for ag in r["affected_genes"]
+        ]
+        blocks.append(
+            f"In-silico KO of {sym} — top {len(lines)} affected genes "
+            f"(Δcos = predicted embedding shift, larger = bigger effect):\n"
+            + "\n".join(lines)
+        )
+    return "\n\n".join(blocks)
 
 
 # ============================================================
@@ -85,6 +118,12 @@ def generation(state: CoScientistState) -> dict[str, Any]:
             lit_blocks.append(f"(PubMed error for '{q}': {e})")
     lit = "\n\n".join(lit_blocks) or "(no literature retrieved)"
 
+    # Geneformer evidence if the goal mentions any gene we have data for.
+    gf = _geneformer_context_for(goal, top_n=10)
+    gf_block = (f"\n\nCached Geneformer in-silico perturbation evidence "
+                f"(use to ground hypotheses in real perturbation data):\n{gf}\n"
+                if gf else "")
+
     existing = state.get("hypotheses", [])
     existing_summary = "\n".join(
         f"- {h.statement[:120]}" for h in sorted(existing, key=lambda h: -h.elo)[:5]
@@ -92,7 +131,8 @@ def generation(state: CoScientistState) -> dict[str, Any]:
 
     out = call_json(
         f"Research goal: {goal}\n\n"
-        f"Relevant literature:\n{lit}\n\n"
+        f"Relevant literature:\n{lit}"
+        f"{gf_block}\n"
         f"Existing top hypotheses (do NOT duplicate):\n{existing_summary}\n\n"
         "Propose 3 NOVEL, testable hypotheses that address the goal. For each, "
         "output an object with keys: statement, rationale, experiment, citations "
@@ -115,11 +155,19 @@ def reflection(state: CoScientistState) -> dict[str, Any]:
     # Review the most under-reviewed hypotheses first.
     targets = sorted(hypotheses, key=lambda h: len(h.review_notes))[:3]
     for h in targets:
+        gf = _geneformer_context_for(
+            f"{h.statement} {h.rationale} {h.experiment}", top_n=8)
+        gf_block = (f"\n\nGeneformer perturbation evidence for genes "
+                    f"mentioned above:\n{gf}\n"
+                    f"Use this to check whether the hypothesis's mechanism "
+                    f"is consistent with the predicted affected genes."
+                    if gf else "")
         critique = call(
             f"Critically review this hypothesis as a peer reviewer.\n\n"
             f"Statement: {h.statement}\n"
             f"Rationale: {h.rationale}\n"
-            f"Proposed experiment: {h.experiment}\n\n"
+            f"Proposed experiment: {h.experiment}"
+            f"{gf_block}\n\n"
             "In 4 sentences max, identify: (a) the strongest objection, "
             "(b) whether the experiment as designed could falsify it, "
             "(c) one concrete improvement."
