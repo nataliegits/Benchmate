@@ -17,7 +17,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from co_scientist.tools import available_geneformer_genes, geneformer_neighbors
-from ui.notebook_gen import generate_notebook, resolve_to_ensembl
+from ui.notebook_gen import generate_notebook, resolve_to_ensembl, CELL_TYPE_PRESETS
 from ui.colab_handoff import handoff
 
 
@@ -53,13 +53,26 @@ tab1, tab2, tab3 = st.tabs([
 
 with tab1:
     st.header("Add genes to the perturbation cache")
-    st.write("Type the gene symbols you want to perturb. We'll generate a "
-             "Colab notebook with these genes pre-filled, push it to a Gist, "
-             "and hand you a one-click Colab link.")
-    genes_in = st.text_input(
-        "Gene symbols (comma-separated)",
-        placeholder="e.g. TXNDC15, SYVN1, MARCHF6",
-    )
+    st.write("Type the gene symbols you want to perturb, pick the cell "
+             "context to perturb them in, and we'll generate a Colab notebook "
+             "with both pre-filled.")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        genes_in = st.text_input(
+            "Gene symbols (comma-separated)",
+            placeholder="e.g. XBP1, ATF4, EIF2AK3",
+        )
+    with col2:
+        preset_name = st.selectbox(
+            "Cell context",
+            list(CELL_TYPE_PRESETS.keys()),
+            index=0,
+            help="Pick the cells Geneformer will perturb your genes in. "
+                 "Choose based on where your genes' biology should be readable.",
+        )
+    st.caption(f"_{CELL_TYPE_PRESETS[preset_name]['rationale']}_")
+
     if st.button("Generate Colab notebook", type="primary"):
         if not genes_in.strip():
             st.error("Enter at least one gene symbol.")
@@ -78,11 +91,11 @@ with tab1:
                 st.error("No symbols resolved. Check spelling.")
                 st.stop()
 
-            st.success(f"Resolved {len(resolved)} gene(s):")
+            st.success(f"Resolved {len(resolved)} gene(s) for context: {preset_name}")
             st.json(resolved)
 
             with st.spinner("Generating notebook…"):
-                nb_path, _ = generate_notebook(resolved.keys())
+                nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
             st.write(f"📓 Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
 
             with st.spinner("Pushing to Gist…"):
