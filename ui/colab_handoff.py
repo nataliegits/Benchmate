@@ -20,24 +20,39 @@ class GhUnavailable(RuntimeError):
     """Raised when `gh` CLI is not installed or not authenticated."""
 
 
+def _find_gh() -> str | None:
+    """Locate the gh binary, checking PATH plus common Homebrew install paths."""
+    on_path = shutil.which("gh")
+    if on_path:
+        return on_path
+    # Streamlit (and other GUI-launched Python processes) sometimes start with
+    # a stripped PATH that doesn't include Homebrew. Check the usual spots.
+    for cand in ("/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/home/linuxbrew/.linuxbrew/bin/gh"):
+        if Path(cand).exists():
+            return cand
+    return None
+
+
 def gh_available() -> bool:
     """Return True if `gh` is installed and the user is authenticated."""
-    if shutil.which("gh") is None:
+    gh = _find_gh()
+    if gh is None:
         return False
-    r = subprocess.run(["gh", "auth", "status"], capture_output=True)
+    r = subprocess.run([gh, "auth", "status"], capture_output=True)
     return r.returncode == 0
 
 
 def push_to_gist(nb_path: Path, description: str = "Benchmate Geneformer perturbation") -> str:
     """Create a gist from `nb_path` and return its raw gist URL."""
-    if not gh_available():
+    gh = _find_gh()
+    if gh is None:
         raise GhUnavailable(
             "`gh` CLI not installed or not authenticated. Install with "
             "`brew install gh && gh auth login`, or download the notebook "
             "and upload it to Colab manually."
         )
     result = subprocess.run(
-        ["gh", "gist", "create", str(nb_path), "--public", "--desc", description],
+        [gh, "gist", "create", str(nb_path), "--public", "--desc", description],
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
