@@ -220,6 +220,30 @@ def _build_cellxgene_cell(preset: dict) -> list[str]:
     ]
 
 
+def _build_download_cell(target_symbols: list[str]) -> list[str]:
+    """Final cell that triggers a browser download of each *_stats.csv.
+
+    Eliminates the Google Drive round-trip: the user gets the CSVs straight
+    onto their Mac and uploads them into Benchmate via the Streamlit widget.
+    """
+    return [
+        "# Auto-download perturbation CSVs to your machine.\n",
+        "# Drop them into Benchmate's UI 'Upload CSVs' panel afterwards.\n",
+        "from google.colab import files\n",
+        "import os\n",
+        "\n",
+        f"DOWNLOAD_TARGETS = {target_symbols}\n",
+        "for sym in DOWNLOAD_TARGETS:\n",
+        "    csv_path = f\"{PERTURB_OUT}/{sym}/{sym}_stats.csv\"\n",
+        "    if os.path.exists(csv_path):\n",
+        "        print(f\"⬇  downloading {sym}_stats.csv\")\n",
+        "        files.download(csv_path)\n",
+        "    else:\n",
+        "        print(f\"⚠  {csv_path} not found — perturbation may have errored\")\n",
+        "print(\"\\nAll downloads triggered. Check your browser's Downloads folder.\")\n",
+    ]
+
+
 def generate_notebook(symbols: Iterable[str],
                       preset_name: str = "Ciliated cells",
                       out_dir: Path | None = None) -> tuple[Path, dict[str, str]]:
@@ -280,6 +304,15 @@ def generate_notebook(symbols: Iterable[str],
         raise RuntimeError("Template lacks a CELLxGENE pull cell.")
     if not replaced["targets"]:
         raise RuntimeError("Template lacks a TARGETS = {...} cell.")
+
+    # Append an auto-download cell so the user gets CSVs without Drive
+    nb["cells"].append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": _build_download_cell(list(targets.keys())),
+    })
 
     out_dir = out_dir or OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)

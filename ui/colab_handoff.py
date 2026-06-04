@@ -4,19 +4,38 @@ Requires the `gh` CLI to be installed and authenticated:
     brew install gh
     gh auth login
 
-The Gist is created public-but-unlisted; only people with the URL can find it.
-If you'd rather keep notebooks private, change `--public` to `--secret` below
-(Colab still works with secret gists when the URL is known).
+If `gh` is unavailable (e.g. when this code runs on Streamlit Cloud),
+`push_to_gist` raises `GhUnavailable`. Callers should fall back to letting
+the user download the notebook and upload it to Colab manually.
 """
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
 
+class GhUnavailable(RuntimeError):
+    """Raised when `gh` CLI is not installed or not authenticated."""
+
+
+def gh_available() -> bool:
+    """Return True if `gh` is installed and the user is authenticated."""
+    if shutil.which("gh") is None:
+        return False
+    r = subprocess.run(["gh", "auth", "status"], capture_output=True)
+    return r.returncode == 0
+
+
 def push_to_gist(nb_path: Path, description: str = "Benchmate Geneformer perturbation") -> str:
     """Create a gist from `nb_path` and return its raw gist URL."""
+    if not gh_available():
+        raise GhUnavailable(
+            "`gh` CLI not installed or not authenticated. Install with "
+            "`brew install gh && gh auth login`, or download the notebook "
+            "and upload it to Colab manually."
+        )
     result = subprocess.run(
         ["gh", "gist", "create", str(nb_path), "--public", "--desc", description],
         capture_output=True, text=True, check=False,

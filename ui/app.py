@@ -7,6 +7,7 @@ Run with:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,29 +19,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from co_scientist.tools import available_geneformer_genes, geneformer_neighbors
 from ui.notebook_gen import generate_notebook, resolve_to_ensembl, CELL_TYPE_PRESETS
-from ui.colab_handoff import handoff
+from ui.colab_handoff import handoff, gh_available, GhUnavailable
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+CACHE_DIR = REPO_ROOT / "data" / "geneformer"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="Benchmate", page_icon="🧪", layout="wide")
 st.title("🧪 Benchmate")
 st.caption("AI co-scientist for biomedical hypothesis generation, grounded in your own perturbation data.")
 
 # ────────────────────────────────────────────────────────────
-# Sidebar: cache status
+# Sidebar: API key + cache status
 # ────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.subheader("Cached perturbations")
+    st.subheader("🔑 Anthropic API key")
+    # Use session state so the key persists across tab switches
+    if "anthropic_key" not in st.session_state:
+        st.session_state.anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    st.session_state.anthropic_key = st.text_input(
+        "Your Anthropic key",
+        value=st.session_state.anthropic_key,
+        type="password",
+        help="Get one at console.anthropic.com. Stays in your browser session "
+             "only — never sent to the Benchmate maintainer.",
+    )
+    if st.session_state.anthropic_key:
+        os.environ["ANTHROPIC_API_KEY"] = st.session_state.anthropic_key
+        st.caption("✅ Key set for this session.")
+    else:
+        st.caption("⚠️ Required for tab 3 (running the agent loop).")
+
+    st.divider()
+    st.subheader("📁 Cached perturbations")
     cached = available_geneformer_genes()
     if cached:
         for g in cached:
             st.markdown(f"• `{g}`")
     else:
-        st.info("No cached perturbations yet. Run the pipeline below to add some.")
+        st.info("No cached perturbations yet.")
+
     st.divider()
-    st.caption("Drop `*_stats.csv` files into `data/geneformer/` "
-               "(manually or via the watcher) to populate the cache.")
+    st.subheader("⬆ Upload CSVs")
+    uploaded = st.file_uploader(
+        "Drop *_stats.csv files here",
+        type=["csv"],
+        accept_multiple_files=True,
+        help="After running the Colab notebook, drag the downloaded "
+             "*_stats.csv files into this box.",
+    )
+    if uploaded:
+        for f in uploaded:
+            name = f.name
+            if not name.endswith("_stats.csv"):
+                st.warning(f"Skipping {name} (expected `*_stats.csv`)")
+                continue
+            dst = CACHE_DIR / name
+            dst.write_bytes(f.read())
+            st.success(f"✓ cached {name}")
+        st.rerun()
 
 # ────────────────────────────────────────────────────────────
 # Tab 1: Generate a Colab notebook for new genes
@@ -98,22 +136,37 @@ with tab1:
                 nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
             st.write(f"📓 Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
 
-            with st.spinner("Pushing to Gist…"):
-                try:
-                    urls = handoff(nb_path, description=f"Benchmate: {', '.join(resolved)}")
-                except Exception as e:
-                    st.error(f"Gist push failed: {e}")
-                    st.info("You can still upload the notebook to Colab manually.")
-                    st.stop()
-            st.markdown(f"### [▶ Open in Colab]({urls['colab_url']})")
-            st.caption(f"Gist: {urls['gist_url']}")
+            # Try Gist push (one-click Colab); fall back to download button
+            if gh_available():
+                with st.spinner("Pushing to Gist for one-click Colab…"):
+                    try:
+                        urls = handoff(nb_path, description=f"Benchmate: {', '.join(resolved)}")
+                    except Exception as e:
+                        urls = None
+                        st.warning(f"Gist push failed: {e}. Falling back to download.")
+                if urls:
+                    st.markdown(f"### [▶ Open in Colab]({urls['colab_url']})")
+                    st.caption(f"Gist: {urls['gist_url']}")
+            else:
+                st.info(
+                    "`gh` CLI not available — download the notebook below, "
+                    "open colab.research.google.com → File → Upload notebook, "
+                    "drop it in."
+                )
+                st.download_button(
+                    "⬇ Download notebook",
+                    nb_path.read_bytes(),
+                    file_name=nb_path.name,
+                    mime="application/x-ipynb+json",
+                )
+
             st.divider()
             st.info(
                 "In Colab: **Runtime → Change runtime type → T4 GPU**, then "
-                "**Runtime → Run all**. CSVs will land in your Google Drive "
-                "under `MyDrive/benchmate_geneformer_cilia/perturbations/`. "
-                "Run `python -m ui.watcher` locally to auto-copy them into the "
-                "cache, or copy them manually into `data/geneformer/`."
+                "**Runtime → Run all**. When it finishes, the final cell "
+                "auto-downloads each `*_stats.csv` to your browser. Drag those "
+                "files into the **Upload CSVs** box in the sidebar — that's "
+                "it, no Drive required."
             )
 
 # ────────────────────────────────────────────────────────────
