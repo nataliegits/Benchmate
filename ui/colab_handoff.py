@@ -29,12 +29,16 @@ def push_to_gist(nb_path: Path, description: str = "Benchmate Geneformer perturb
 
 
 def colab_url(gist_url: str) -> str:
-    """Convert a gist URL into a Colab 'open in Colab' link."""
-    m = re.search(r"gist\.github\.com/[^/]+/(\w+)", gist_url)
+    """Convert a gist URL into a Colab 'open in Colab' link.
+
+    Colab needs the full `/gist/{username}/{gist_id}` path; gist ID alone
+    won't resolve (it raises 'Unexpected GitHub Gist path').
+    """
+    m = re.search(r"gist\.github\.com/([^/]+)/(\w+)", gist_url)
     if not m:
-        raise ValueError(f"Could not parse gist id from {gist_url}")
-    gist_id = m.group(1)
-    return f"https://colab.research.google.com/gist/{gist_id}"
+        raise ValueError(f"Could not parse gist URL {gist_url}")
+    username, gist_id = m.group(1), m.group(2)
+    return f"https://colab.research.google.com/gist/{username}/{gist_id}"
 
 
 def handoff(nb_path: Path, description: str = "Benchmate Geneformer perturbation") -> dict:
