@@ -254,9 +254,10 @@ def evolution(state: CoScientistState) -> dict[str, Any]:
             f"Original rationale: {h.rationale}\n"
             f"Original experiment: {h.experiment}\n"
             f"Reviewer critiques: {' | '.join(h.review_notes[-2:]) or 'none'}\n\n"
-            "Output a JSON object with keys: statement, rationale, experiment."
+            "Output a JSON object with keys: statement, rationale, experiment. "
+            "Keep the experiment field under 1500 words so the JSON closes."
             + _addendum(state),
-            system=SYSTEM_BASE, temperature=0.6, max_tokens=1200,
+            system=SYSTEM_BASE, temperature=0.6, max_tokens=4000,
         )
         new = Hypothesis.new(
             statement=out["statement"], rationale=out["rationale"],
