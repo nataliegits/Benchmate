@@ -1,19 +1,26 @@
 """Push a generated notebook to a GitHub Gist and return its Colab URL.
 
-Requires the `gh` CLI to be installed and authenticated:
-    brew install gh
-    gh auth login
+Two paths, tried in order:
+  1. GitHub REST API via `GITHUB_TOKEN` env var — works anywhere with httpx.
+     Set the token as a Streamlit Cloud secret to give public users
+     one-click Colab links.
+  2. Local `gh` CLI — works on a developer's Mac if `gh auth login` has
+     been done.
 
-If `gh` is unavailable (e.g. when this code runs on Streamlit Cloud),
-`push_to_gist` raises `GhUnavailable`. Callers should fall back to letting
-the user download the notebook and upload it to Colab manually.
+If neither is available, `push_to_gist` raises `GhUnavailable`. Callers
+should fall back to letting the user download the notebook and upload it
+to Colab manually.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
+
+import httpx
 
 
 class GhUnavailable(RuntimeError):
@@ -34,7 +41,9 @@ def _find_gh() -> str | None:
 
 
 def gh_available() -> bool:
-    """Return True if `gh` is installed and the user is authenticated."""
+    """True if we can create gists — either via GITHUB_TOKEN or local gh CLI."""
+    if os.environ.get("GITHUB_TOKEN"):
+        return True
     gh = _find_gh()
     if gh is None:
         return False
@@ -42,14 +51,45 @@ def gh_available() -> bool:
     return r.returncode == 0
 
 
+def _push_via_api(nb_path: Path, token: str, description: str) -> str:
+    """Create a gist via the GitHub REST API. Works anywhere with `httpx`."""
+    payload = {
+        "description": description,
+        "public": True,
+        "files": {nb_path.name: {"content": nb_path.read_text()}},
+    }
+    r = httpx.post(
+        "https://api.github.com/gists",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        json=payload,
+        timeout=20,
+    )
+    if r.status_code != 201:
+        raise RuntimeError(f"GitHub API gist create failed ({r.status_code}): {r.text[:200]}")
+    return r.json()["html_url"]
+
+
 def push_to_gist(nb_path: Path, description: str = "Benchmate Geneformer perturbation") -> str:
-    """Create a gist from `nb_path` and return its raw gist URL."""
+    """Create a gist from `nb_path` and return its gist URL.
+
+    Tries the GitHub API first (works on Streamlit Cloud if GITHUB_TOKEN is set),
+    falls back to the local `gh` CLI.
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        return _push_via_api(nb_path, token, description)
+
     gh = _find_gh()
     if gh is None:
         raise GhUnavailable(
-            "`gh` CLI not installed or not authenticated. Install with "
-            "`brew install gh && gh auth login`, or download the notebook "
-            "and upload it to Colab manually."
+            "Neither GITHUB_TOKEN nor a `gh` CLI is available. "
+            "Set GITHUB_TOKEN as an env var / Streamlit secret, install "
+            "`gh` locally (`brew install gh && gh auth login`), or download "
+            "the notebook and upload it to Colab manually."
         )
     result = subprocess.run(
         [gh, "gist", "create", str(nb_path), "--public", "--desc", description],

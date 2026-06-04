@@ -17,7 +17,17 @@ with GitHub, deploys in under five minutes.
    - **Branch:** `main`
    - **Main file path:** `ui/app.py`
    - **App URL:** pick a slug — e.g. `benchmate.streamlit.app`
-4. Click **Deploy**.
+4. Click **Advanced settings** and add a secret (highly recommended):
+   ```
+   GITHUB_TOKEN = "ghp_..."
+   ```
+   Without this, public visitors get a "Download notebook → upload to
+   Colab manually" two-step instead of the one-click ▶ Open in Colab
+   button. Create a fine-grained PAT at
+   [github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)
+   with **only** the `Gist: Read and write` scope. Generated notebooks
+   will be public gists under your account.
+5. Click **Deploy**.
 
 The first build takes ~3 minutes (installing the requirements). After that,
 every git push to `main` redeploys automatically.
