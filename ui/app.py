@@ -30,15 +30,56 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="Benchmate", layout="wide")
 
+# Inter for body text, Source Serif 4 for display — matches the editorial
+# research-tool aesthetic (Elicit-style). Loaded from Google Fonts; falls
+# back to system sans if blocked.
+st.markdown(
+    """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        html, body, [class*="css"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif !important;
+            font-feature-settings: 'cv11', 'ss01', 'ss03';
+            letter-spacing: -0.005em;
+        }
+        h1, h2, h3 {
+            font-family: 'Source Serif 4', Georgia, serif !important;
+            letter-spacing: -0.015em;
+            font-weight: 600;
+        }
+        h1 { font-size: 2.4rem !important; }
+        h2 { font-size: 1.5rem !important; }
+        code, pre, .stCode {
+            font-family: 'JetBrains Mono', 'SF Mono', Menlo,
+                         monospace !important;
+        }
+        /* Subtle teal accent on primary buttons */
+        .stButton button[kind="primary"] {
+            background-color: #0e7490;
+            border-color: #0e7490;
+        }
+        .stButton button[kind="primary"]:hover {
+            background-color: #155e75;
+            border-color: #155e75;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Header with a thin accent rule above the title for editorial polish
 st.markdown(
     "<div style='border-top: 3px solid #0e7490; width: 56px; "
-    "margin-bottom: 6px;'></div>",
+    "margin-bottom: 8px;'></div>",
     unsafe_allow_html=True,
 )
 st.title("Benchmate")
 st.markdown(
-    "<p style='color:#57534e; font-size:1.05rem; margin-top:-8px;'>"
+    "<p style='color:#57534e; font-size:1.05rem; margin-top:-8px; "
+    "font-family: Inter, sans-serif;'>"
     "An AI co-scientist for biomedical hypothesis generation, grounded "
     "in your own perturbation data.</p>",
     unsafe_allow_html=True,
