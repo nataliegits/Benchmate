@@ -1,4 +1,4 @@
-"""Streamlit UI for Benchmate's "add genes → Colab → Benchmate" loop.
+"""Streamlit UI for Benchmate.
 
 Run with:
     cd ~/Desktop/Benchmate
@@ -7,6 +7,7 @@ Run with:
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -27,42 +28,44 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO_ROOT / "data" / "geneformer"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-st.set_page_config(page_title="Benchmate", page_icon="🧪", layout="wide")
-st.title("🧪 Benchmate")
-st.caption("AI co-scientist for biomedical hypothesis generation, grounded in your own perturbation data.")
+st.set_page_config(page_title="Benchmate", layout="wide")
+st.title("Benchmate")
+st.caption(
+    "An AI co-scientist for biomedical hypothesis generation, grounded in "
+    "your own perturbation data."
+)
 
 # ────────────────────────────────────────────────────────────
-# Sidebar: API key + cache status
+# Sidebar: keys, cache, uploads, model routing
 # ────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.subheader("🔑 Anthropic API key")
-    # Use session state so the key persists across tab switches
+    st.subheader("Anthropic API key")
     if "anthropic_key" not in st.session_state:
         st.session_state.anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     st.session_state.anthropic_key = st.text_input(
         "Your Anthropic key",
         value=st.session_state.anthropic_key,
         type="password",
-        help="Get one at console.anthropic.com. Stays in your browser session "
-             "only — never sent to the Benchmate maintainer.",
+        help="Available at console.anthropic.com. Stored only in your "
+             "browser session.",
     )
     if st.session_state.anthropic_key:
         os.environ["ANTHROPIC_API_KEY"] = st.session_state.anthropic_key
-        st.caption("✅ Key set for this session.")
+        st.caption("Key set for this session.")
     else:
-        st.caption("⚠️ Required for tab 3 (running the agent loop).")
+        st.caption("Required for the Run Benchmate tab.")
 
     st.divider()
-    st.subheader("📁 Cached perturbations")
+    st.subheader("Cached perturbations")
     cached = available_geneformer_genes()
     if cached:
         for g in cached:
-            st.markdown(f"• `{g}`")
+            st.markdown(f"- `{g}`")
     else:
         st.info("No cached perturbations yet.")
 
     st.divider()
-    st.subheader("⬆ Upload CSVs")
+    st.subheader("Upload CSVs")
     uploaded = st.file_uploader(
         "Drop *_stats.csv files here",
         type=["csv"],
@@ -74,19 +77,20 @@ with st.sidebar:
         for f in uploaded:
             name = f.name
             if not name.endswith("_stats.csv"):
-                st.warning(f"Skipping {name} (expected `*_stats.csv`)")
+                st.warning(f"Skipping {name} (expected *_stats.csv)")
                 continue
             dst = CACHE_DIR / name
             dst.write_bytes(f.read())
-            st.success(f"✓ cached {name}")
+            st.success(f"Cached {name}")
         st.rerun()
 
     st.divider()
-    with st.expander("🧮 Model routing (Pi)", expanded=False):
-        st.caption("Pick which model handles each agent role. Sonnet for "
-                   "reasoning-heavy roles; Haiku/Flash for throughput. Changes "
-                   "apply to the next Run Benchmate.")
-        # Common multi-provider options via litellm
+    with st.expander("Model routing", expanded=False):
+        st.caption(
+            "Assign a model to each agent role. The default sends "
+            "reasoning-heavy roles to Sonnet and throughput roles to Haiku. "
+            "Changes apply to the next Run Benchmate call."
+        )
         MODEL_OPTIONS = [
             "anthropic/claude-sonnet-4-6",
             "anthropic/claude-haiku-4-5",
@@ -96,7 +100,7 @@ with st.sidebar:
             "gemini/gemini-2.5-pro",
             "gemini/gemini-2.5-flash",
         ]
-        ROLE_PRICE = {  # rough $/1M input tokens for cost hints
+        ROLE_PRICE = {
             "anthropic/claude-sonnet-4-6": 3.0,
             "anthropic/claude-haiku-4-5": 1.0,
             "anthropic/claude-opus-4-7": 15.0,
@@ -117,29 +121,33 @@ with st.sidebar:
                 MODEL_OPTIONS,
                 index=idx,
                 key=f"model_{role}",
-                help=f"~${ROLE_PRICE.get(current, '?')}/1M tok currently",
+                help=f"~${ROLE_PRICE.get(current, '?')}/1M input tokens",
             )
             if choice != current:
                 os.environ[f"BENCHMATE_MODEL_{role.upper()}"] = choice
-        st.caption("_Tip:_ keep Generation/Reflection/Evolution on a strong "
-                   "model (they read Geneformer evidence); the others can be "
-                   "Haiku or Flash without losing quality.")
+        st.caption(
+            "Generation, Reflection, and Evolution benefit most from a "
+            "strong model — they read the Geneformer evidence. The others "
+            "can run cheaper without measurable quality loss."
+        )
 
 # ────────────────────────────────────────────────────────────
-# Tab 1: Generate a Colab notebook for new genes
+# Tabs
 # ────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
-    "1. New perturbation",
-    "2. Inspect cache",
-    "3. Run Benchmate",
-    "4. Hermes preview",
+    "New perturbation",
+    "Inspect cache",
+    "Run Benchmate",
+    "Hermes preview",
 ])
 
+# ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
     st.header("Add genes to the perturbation cache")
-    st.write("Type the gene symbols you want to perturb, pick the cell "
-             "context to perturb them in, and we'll generate a Colab notebook "
-             "with both pre-filled.")
+    st.write(
+        "Enter the gene symbols you want to perturb and pick the cell "
+        "context. Benchmate generates a Colab notebook with both pre-filled."
+    )
 
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -152,17 +160,17 @@ with tab1:
             "Cell context",
             list(CELL_TYPE_PRESETS.keys()),
             index=0,
-            help="Pick the cells Geneformer will perturb your genes in. "
-                 "Choose based on where your genes' biology should be readable.",
+            help="The cells Geneformer will perturb your genes in. "
+                 "Pick where your genes' biology should be readable.",
         )
-    st.caption(f"_{CELL_TYPE_PRESETS[preset_name]['rationale']}_")
+    st.caption(CELL_TYPE_PRESETS[preset_name]["rationale"])
 
     if st.button("Generate Colab notebook", type="primary"):
         if not genes_in.strip():
             st.error("Enter at least one gene symbol.")
         else:
             symbols = [g.strip().upper() for g in genes_in.split(",") if g.strip()]
-            with st.spinner("Resolving Ensembl IDs…"):
+            with st.spinner("Resolving Ensembl IDs..."):
                 try:
                     resolved = resolve_to_ensembl(symbols)
                 except Exception as e:
@@ -178,29 +186,28 @@ with tab1:
             st.success(f"Resolved {len(resolved)} gene(s) for context: {preset_name}")
             st.json(resolved)
 
-            with st.spinner("Generating notebook…"):
+            with st.spinner("Generating notebook..."):
                 nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
-            st.write(f"📓 Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
+            st.write(f"Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
 
-            # Try Gist push (one-click Colab); fall back to download button
             if gh_available():
-                with st.spinner("Pushing to Gist for one-click Colab…"):
+                with st.spinner("Pushing to Gist..."):
                     try:
                         urls = handoff(nb_path, description=f"Benchmate: {', '.join(resolved)}")
                     except Exception as e:
                         urls = None
                         st.warning(f"Gist push failed: {e}. Falling back to download.")
                 if urls:
-                    st.markdown(f"### [▶ Open in Colab]({urls['colab_url']})")
+                    st.markdown(f"### [Open in Colab]({urls['colab_url']})")
                     st.caption(f"Gist: {urls['gist_url']}")
             else:
                 st.info(
-                    "`gh` CLI not available — download the notebook below, "
-                    "open colab.research.google.com → File → Upload notebook, "
-                    "drop it in."
+                    "GitHub CLI not available. Download the notebook below, "
+                    "open colab.research.google.com, and use "
+                    "File → Upload notebook to load it."
                 )
                 st.download_button(
-                    "⬇ Download notebook",
+                    "Download notebook",
                     nb_path.read_bytes(),
                     file_name=nb_path.name,
                     mime="application/x-ipynb+json",
@@ -208,16 +215,13 @@ with tab1:
 
             st.divider()
             st.info(
-                "In Colab: **Runtime → Change runtime type → T4 GPU**, then "
-                "**Runtime → Run all**. When it finishes, the final cell "
-                "auto-downloads each `*_stats.csv` to your browser. Drag those "
-                "files into the **Upload CSVs** box in the sidebar — that's "
-                "it, no Drive required."
+                "In Colab: Runtime → Change runtime type → T4 GPU, then "
+                "Runtime → Run all. When the notebook finishes, the final "
+                "cell auto-downloads each *_stats.csv to your browser. "
+                "Drag those files into the Upload CSVs panel in the sidebar."
             )
 
-# ────────────────────────────────────────────────────────────
-# Tab 2: Browse cached perturbations
-# ────────────────────────────────────────────────────────────
+# ── Tab 2 ────────────────────────────────────────────────────
 with tab2:
     st.header("Browse the cache")
     if not cached:
@@ -229,14 +233,12 @@ with tab2:
         if "error" in r:
             st.error(r["error"])
         else:
-            st.write(f"Top {r['n_results']} affected genes when **{gene}** was deleted:")
+            st.write(f"Top {r['n_results']} affected genes when {gene} was deleted:")
             import pandas as pd
             df = pd.DataFrame(r["affected_genes"])
             st.dataframe(df, use_container_width=True)
 
-# ────────────────────────────────────────────────────────────
-# Tab 3: Run the Benchmate loop
-# ────────────────────────────────────────────────────────────
+# ── Tab 3 ────────────────────────────────────────────────────
 with tab3:
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
@@ -251,13 +253,12 @@ with tab3:
         ),
     )
     iterations = st.slider("Max iterations", 4, 16, 8)
-    cost_estimate = 0.30 * iterations / 4  # ~$0.30 per 4 iterations
-    st.caption(f"Estimated Anthropic spend: **~${cost_estimate:.2f}** "
+    cost_estimate = 0.30 * iterations / 4
+    st.caption(f"Estimated Anthropic spend: ~${cost_estimate:.2f} "
                f"({iterations} iterations).")
 
     if st.button("Run Benchmate", type="primary"):
-        st.info("Running… this will stream output below. The Streamlit page "
-                "stays responsive; you can browse other tabs.")
+        st.info("Running. Log lines stream below; the page stays responsive.")
         log_box = st.empty()
         log_lines: list[str] = []
         proc = subprocess.Popen(
@@ -281,20 +282,21 @@ with tab3:
         else:
             st.error(f"Benchmate exited with code {proc.returncode}.")
 
-
-# ────────────────────────────────────────────────────────────
-# Tab 4: Hermes preview — see what Hermes would receive
-# ────────────────────────────────────────────────────────────
+# ── Tab 4 ────────────────────────────────────────────────────
 with tab4:
     st.header("Hermes preview")
-    st.write("Hermes (https://hermes-agent.nousresearch.com/) is an autonomous "
-             "agent that lives on a server and accepts messages from "
-             "Slack/Discord/Telegram. When you wire it up to Benchmate, it "
-             "calls the same JSON API previewed below.")
-    st.caption("This tab just lets you _see_ what Hermes would receive without "
-               "needing a VPS. Full deployment guide: `HERMES.md`.")
+    st.write(
+        "Hermes is an autonomous agent (hermes-agent.nousresearch.com) that "
+        "runs on a server and accepts messages from Slack, Discord, "
+        "Telegram, email, or the CLI. When wired to Benchmate, it calls the "
+        "JSON-in / JSON-out functions previewed below."
+    )
+    st.caption(
+        "This tab shows the inputs and outputs of those functions so you "
+        "can validate the integration before deploying Hermes. Full "
+        "deployment guide: HERMES.md."
+    )
 
-    import json
     from hermes.benchmate_runner import (
         list_cache as hermes_list_cache,
         gene_neighbors as hermes_neighbors,
@@ -302,18 +304,15 @@ with tab4:
     )
 
     with st.container(border=True):
-        st.markdown("**`list_cache()`** — what genes does Hermes 'see'?")
-        st.caption("Slack equivalent: _\"hey hermes, what perturbations do we "
-                   "have cached?\"_")
+        st.markdown("**list_cache()** — what genes are in the cache?")
+        st.caption("Chat equivalent: \"hermes, what perturbations do we have cached?\"")
         if st.button("Run list_cache", key="hermes_list"):
             result = hermes_list_cache()
             st.code(json.dumps(result, indent=2), language="json")
 
     with st.container(border=True):
-        st.markdown("**`gene_neighbors(symbol, top_n)`** — what would a "
-                    "knockout perturb?")
-        st.caption("Slack equivalent: _\"hermes, what does TXNDC15 knockout "
-                   "shift downstream?\"_")
+        st.markdown("**gene_neighbors(symbol, top_n)** — top affected genes for a knockout")
+        st.caption("Chat equivalent: \"hermes, what does TXNDC15 knockout shift downstream?\"")
         col_a, col_b = st.columns([2, 1])
         with col_a:
             sym = st.selectbox("Gene", cached or ["(no cached genes)"],
@@ -330,10 +329,8 @@ with tab4:
                 st.warning("No cached genes — upload some CSVs first.")
 
     with st.container(border=True):
-        st.markdown("**`add_perturbation(symbols, cell_context)`** — generate "
-                    "a new Colab notebook")
-        st.caption("Slack equivalent: _\"hermes, add FOXP3 to the perturbation "
-                   "queue in plasma cells.\"_")
+        st.markdown("**add_perturbation(symbols, cell_context)** — generate a Colab notebook")
+        st.caption("Chat equivalent: \"hermes, add FOXP3 to the perturbation queue in plasma cells.\"")
         col_a, col_b = st.columns([2, 1])
         with col_a:
             new_genes = st.text_input("Gene symbols (comma-separated)",
@@ -341,7 +338,7 @@ with tab4:
         with col_b:
             new_ctx = st.selectbox("Cell context",
                                    list(CELL_TYPE_PRESETS.keys()),
-                                   index=2,  # plasma cells
+                                   index=2,
                                    key="hermes_add_ctx")
         if st.button("Run add_perturbation", key="hermes_add_btn"):
             syms = [g.strip().upper() for g in new_genes.split(",") if g.strip()]
@@ -349,13 +346,13 @@ with tab4:
             st.code(json.dumps(result, indent=2, default=str), language="json")
 
     with st.container(border=True):
-        st.markdown("**`run_benchmate(goal, max_iterations)`** — execute the "
-                    "full agent loop")
-        st.caption("Slack equivalent: _\"hermes, run benchmate on this goal: "
-                   "...\"_")
-        st.info("This one actually costs money (~$0.30–$3 depending on "
-                "iterations). Use **Tab 3** to run it for real with live "
-                "log streaming. The JSON output shape Hermes receives is:")
+        st.markdown("**run_benchmate(goal, max_iterations)** — execute the full agent loop")
+        st.caption("Chat equivalent: \"hermes, run benchmate on this goal: ...\"")
+        st.info(
+            "This call costs API credits (roughly $0.30–$3 depending on "
+            "iterations). Use the Run Benchmate tab for live runs. The "
+            "JSON shape Hermes receives is:"
+        )
         st.code(json.dumps({
             "iterations_run": 8,
             "n_hypotheses": 24,
@@ -374,10 +371,10 @@ with tab4:
 
     st.divider()
     st.markdown(
-        "### Want this in Slack?\n"
-        "All four commands above also work as CLI: "
-        "`python -m hermes.benchmate_runner list-cache`. "
-        "To make them chat-driven, deploy Hermes on a small VPS and "
-        "register a skill that wraps the CLI. Full guide in "
-        "[`HERMES.md`](https://github.com/nataliegits/Benchmate/blob/main/HERMES.md)."
+        "### Wire Hermes to Slack\n"
+        "All four functions also run as CLI commands "
+        "(`python -m hermes.benchmate_runner list-cache`). To make them "
+        "chat-driven, deploy Hermes on a small VPS and register a skill "
+        "that wraps the CLI. The full guide is in "
+        "[HERMES.md](https://github.com/nataliegits/Benchmate/blob/main/HERMES.md)."
     )

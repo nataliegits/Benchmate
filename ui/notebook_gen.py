@@ -228,7 +228,7 @@ def _build_download_cell(target_symbols: list[str]) -> list[str]:
     """
     return [
         "# Auto-download perturbation CSVs to your machine.\n",
-        "# Drop them into Benchmate's UI 'Upload CSVs' panel afterwards.\n",
+        "# Upload them via Benchmate's 'Upload CSVs' panel afterwards.\n",
         "from google.colab import files\n",
         "import os\n",
         "\n",
@@ -236,10 +236,10 @@ def _build_download_cell(target_symbols: list[str]) -> list[str]:
         "for sym in DOWNLOAD_TARGETS:\n",
         "    csv_path = f\"{PERTURB_OUT}/{sym}/{sym}_stats.csv\"\n",
         "    if os.path.exists(csv_path):\n",
-        "        print(f\"⬇  downloading {sym}_stats.csv\")\n",
+        "        print(f\"Downloading {sym}_stats.csv\")\n",
         "        files.download(csv_path)\n",
         "    else:\n",
-        "        print(f\"⚠  {csv_path} not found — perturbation may have errored\")\n",
+        "        print(f\"NOT FOUND: {csv_path} (perturbation may have errored)\")\n",
         "print(\"\\nAll downloads triggered. Check your browser's Downloads folder.\")\n",
     ]
 

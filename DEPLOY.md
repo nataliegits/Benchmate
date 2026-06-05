@@ -22,7 +22,7 @@ with GitHub, deploys in under five minutes.
    GITHUB_TOKEN = "ghp_..."
    ```
    Without this, public visitors get a "Download notebook → upload to
-   Colab manually" two-step instead of the one-click ▶ Open in Colab
+   Colab manually" two-step instead of the one-click Open in Colab
    button. Create a fine-grained PAT at
    [github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta)
    with **only** the `Gist: Read and write` scope. Generated notebooks
