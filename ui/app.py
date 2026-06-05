@@ -29,10 +29,19 @@ CACHE_DIR = REPO_ROOT / "data" / "geneformer"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="Benchmate", layout="wide")
+
+# Header with a thin accent rule above the title for editorial polish
+st.markdown(
+    "<div style='border-top: 3px solid #0e7490; width: 56px; "
+    "margin-bottom: 6px;'></div>",
+    unsafe_allow_html=True,
+)
 st.title("Benchmate")
-st.caption(
-    "An AI co-scientist for biomedical hypothesis generation, grounded in "
-    "your own perturbation data."
+st.markdown(
+    "<p style='color:#57534e; font-size:1.05rem; margin-top:-8px;'>"
+    "An AI co-scientist for biomedical hypothesis generation, grounded "
+    "in your own perturbation data.</p>",
+    unsafe_allow_html=True,
 )
 
 # ────────────────────────────────────────────────────────────
@@ -59,8 +68,10 @@ with st.sidebar:
     st.subheader("Cached perturbations")
     cached = available_geneformer_genes()
     if cached:
-        for g in cached:
-            st.markdown(f"- `{g}`")
+        st.metric("genes", len(cached))
+        with st.container(border=True):
+            for g in cached:
+                st.markdown(f"`{g}`")
     else:
         st.info("No cached perturbations yet.")
 
