@@ -23,7 +23,16 @@ console = Console()
 
 
 def print_top(state, top_n: int = 5) -> None:
-    hyps = sorted(state.get("hypotheses", []), key=lambda h: -h.elo)[:top_n]
+    # Sort: tested hypotheses first (by Elo), then untested at the bottom.
+    # A 0-match hypothesis is still at the default 1200 Elo — it hasn't been
+    # in any tournament round yet, so its rating is not a quality signal.
+    all_hyps = state.get("hypotheses", [])
+    hyps = sorted(
+        all_hyps,
+        key=lambda h: (h.matches_played > 0, h.elo),
+        reverse=True,
+    )[:top_n]
+
     table = Table(title=f"Top hypotheses (iter {state.get('iteration', 0)})",
                   show_lines=True)
     table.add_column("Elo", justify="right", style="bold")
@@ -31,7 +40,9 @@ def print_top(state, top_n: int = 5) -> None:
     table.add_column("Gen", justify="right")
     table.add_column("Statement", overflow="fold")
     for h in hyps:
-        table.add_row(f"{h.elo:.0f}", str(h.matches_played),
+        elo_label = (f"{h.elo:.0f}" if h.matches_played > 0
+                     else f"{h.elo:.0f} (unranked)")
+        table.add_row(elo_label, str(h.matches_played),
                       str(h.generation), h.statement)
     console.print(table)
 

@@ -320,12 +320,77 @@ with tab3:
         )
         for line in proc.stdout:  # type: ignore[union-attr]
             log_lines.append(line.rstrip())
-            log_box.code("\n".join(log_lines[-40:]))
+            log_box.code("\n".join(log_lines[-120:]))
         proc.wait()
         if proc.returncode == 0:
             st.success("Benchmate finished.")
             state_file = REPO_ROOT / "state.json"
             if state_file.exists():
+                # Parse and display top hypotheses as a real Streamlit table
+                # so column headers stay visible regardless of log scrollback.
+                state_data = json.loads(state_file.read_text())
+                hyps = sorted(
+                    state_data.get("hypotheses", []),
+                    key=lambda h: (h.get("matches_played", 0) > 0,
+                                   h.get("elo", 0)),
+                    reverse=True,
+                )[:5]
+                if hyps:
+                    import pandas as pd
+                    rows = []
+                    for h in hyps:
+                        played = h.get("matches_played", 0)
+                        rows.append({
+                            "Elo": round(h.get("elo", 0), 0),
+                            "Matches": played,
+                            "Gen": h.get("generation", 0),
+                            "Ranked": "yes" if played > 0 else "no (untested)",
+                            "Statement": h.get("statement", ""),
+                        })
+                    df = pd.DataFrame(rows)
+                    st.subheader(f"Top {len(hyps)} hypotheses")
+                    st.dataframe(
+                        df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Elo": st.column_config.NumberColumn(
+                                width="small",
+                                help="Tournament rating (starts at 1200). "
+                                     "Wins push up, losses pull down."),
+                            "Matches": st.column_config.NumberColumn(
+                                width="small",
+                                help="Number of pairwise tournament rounds "
+                                     "this hypothesis has been judged in. "
+                                     "Higher = more reliable rating."),
+                            "Gen": st.column_config.NumberColumn(
+                                width="small",
+                                help="Generation: 0 = original Generation "
+                                     "output, 1 = first Evolution refinement, "
+                                     "2 = second, etc."),
+                            "Ranked": st.column_config.TextColumn(
+                                width="small",
+                                help="'no' means the hypothesis was created "
+                                     "by Evolution after the last Ranking "
+                                     "round, so its Elo is still the default "
+                                     "1200 and isn't a quality signal."),
+                            "Statement": st.column_config.TextColumn(width="large"),
+                        },
+                    )
+                    # Per-hypothesis expand for rationale + experiment
+                    for i, h in enumerate(hyps, 1):
+                        with st.expander(
+                            f"#{i} — Elo {round(h.get('elo', 0), 0):.0f} "
+                            f"— rationale + experiment"
+                        ):
+                            st.markdown("**Rationale**")
+                            st.markdown(h.get("rationale", ""))
+                            st.markdown("**Proposed experiment**")
+                            st.markdown(h.get("experiment", ""))
+                            if h.get("review_notes"):
+                                st.markdown("**Reviewer notes**")
+                                for note in h["review_notes"]:
+                                    st.markdown(f"- {note}")
                 st.download_button(
                     "Download state.json",
                     state_file.read_text(),
