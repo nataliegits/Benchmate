@@ -75,7 +75,7 @@ def supervisor(state: CoScientistState) -> dict[str, Any]:
             "  evaluation_criteria: list of 3-5 criteria for judging hypotheses\n"
             "  constraints:        any explicit constraints from the goal\n"
             "  initial_search_terms: 3-5 PubMed search queries to seed the work",
-            system=SYSTEM_BASE,
+            system=SYSTEM_BASE, role="supervisor",
         )
         return {"plan_config": plan, "iteration": 0,
                 "hypotheses": [], "meta_critique": MetaCritique(),
@@ -139,7 +139,8 @@ def generation(state: CoScientistState) -> dict[str, Any]:
         "(list of PMIDs from the literature above, if applicable). Return a JSON "
         "object: {\"hypotheses\": [..., ..., ...]}."
         + _addendum(state),
-        system=SYSTEM_BASE, temperature=0.9, max_tokens=3000,
+        system=SYSTEM_BASE, role="generation",
+        temperature=0.9, max_tokens=3000,
     )
 
     new = [Hypothesis.new(**h) for h in out["hypotheses"]]
@@ -172,7 +173,8 @@ def reflection(state: CoScientistState) -> dict[str, Any]:
             "(b) whether the experiment as designed could falsify it, "
             "(c) one concrete improvement."
             + _addendum(state),
-            system=SYSTEM_BASE, temperature=0.4, max_tokens=400,
+            system=SYSTEM_BASE, role="reflection",
+            temperature=0.4, max_tokens=400,
         )
         h.review_notes.append(critique.strip())
     return {"hypotheses": hypotheses}
@@ -198,7 +200,8 @@ def ranking(state: CoScientistState) -> dict[str, Any]:
             "Output JSON: {\"winner\": \"A\" | \"B\" | \"draw\", "
             "\"reason\": \"one sentence under 40 words\"}"
             + _addendum(state),
-            system=SYSTEM_BASE, temperature=0.2, max_tokens=500,
+            system=SYSTEM_BASE, role="ranking",
+            temperature=0.2, max_tokens=500,
         )
         if verdict["winner"] == "A":
             update_elo(a, b)
@@ -257,7 +260,8 @@ def evolution(state: CoScientistState) -> dict[str, Any]:
             "Output a JSON object with keys: statement, rationale, experiment. "
             "Keep the experiment field under 1500 words so the JSON closes."
             + _addendum(state),
-            system=SYSTEM_BASE, temperature=0.6, max_tokens=4000,
+            system=SYSTEM_BASE, role="evolution",
+            temperature=0.6, max_tokens=4000,
         )
         new = Hypothesis.new(
             statement=out["statement"], rationale=out["rationale"],
@@ -295,7 +299,8 @@ def meta_review(state: CoScientistState) -> dict[str, Any]:
         "Output JSON: {\"recurring_issues\": [str, ...], "
         "\"successful_patterns\": [str, ...]} with at most 4 of each, "
         "phrased as actionable rules.",
-        system=SYSTEM_BASE, temperature=0.3, max_tokens=900,
+        system=SYSTEM_BASE, role="meta_review",
+        temperature=0.3, max_tokens=900,
     )
     return {"meta_critique": MetaCritique(
         recurring_issues=out.get("recurring_issues", []),

@@ -1,7 +1,13 @@
-"""Thin wrapper around Claude with JSON-structured output.
+"""LLM wrapper with per-role model routing.
 
-This is the only file that talks to the Anthropic SDK. If you want to swap to
-Gemini or a NIM-hosted Nemotron, replace just this file.
+Uses `litellm` as the multi-provider backend so the same code can call
+Anthropic, OpenAI, Google, Mistral, Bedrock, or anything else litellm
+supports (15+ providers). The model picked depends on which agent role
+is calling — see `llm_config.py` for the role→model mapping.
+
+This is the only file that talks to the LLM SDK. If you want to swap the
+backend (e.g. to Pi's Python SDK or a NIM-hosted Nemotron), replace just
+this file.
 """
 from __future__ import annotations
 
@@ -10,51 +16,66 @@ import os
 import re
 from typing import Any
 
-from anthropic import Anthropic
+import litellm
 
-_client: Anthropic | None = None
-
-
-def _get_client() -> Anthropic:
-    global _client
-    if _client is None:
-        _client = Anthropic()  # reads ANTHROPIC_API_KEY
-    return _client
+from .llm_config import model_for
 
 
-# Use the Claude SDK's enum-friendly model string. Swap to whatever model you
-# prefer — Sonnet is the sweet spot of speed and reasoning quality.
-DEFAULT_MODEL = os.environ.get("CO_SCIENTIST_MODEL", "claude-sonnet-4-6")
+# Don't log every call — Benchmate's own output is the source of truth
+litellm.suppress_debug_info = True
 
 
-def call(prompt: str, *, system: str = "", model: str | None = None,
-         max_tokens: int = 2048, temperature: float = 0.7) -> str:
-    """One-shot text completion. Returns the model's text response."""
-    msg = _get_client().messages.create(
-        model=model or DEFAULT_MODEL,
+# Backwards-compat: callers that don't pass a role get this default
+DEFAULT_MODEL = os.environ.get("CO_SCIENTIST_MODEL", "anthropic/claude-sonnet-4-6")
+
+
+def _resolve_model(role: str | None, explicit: str | None) -> str:
+    """Pick the model for this call: explicit override > role lookup > default."""
+    if explicit:
+        return explicit
+    if role:
+        return model_for(role)
+    return DEFAULT_MODEL
+
+
+def call(prompt: str, *, system: str = "", role: str | None = None,
+         model: str | None = None, max_tokens: int = 2048,
+         temperature: float = 0.7) -> str:
+    """One-shot text completion. Returns the model's text response.
+
+    `role` picks the model via llm_config (e.g. "ranking" → Haiku).
+    `model` overrides the role lookup with an explicit model string.
+    """
+    use_model = _resolve_model(role, model)
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    resp = litellm.completion(
+        model=use_model,
+        messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in msg.content if hasattr(b, "text"))
+    return resp.choices[0].message.content or ""
 
 
-def call_json(prompt: str, *, system: str = "", model: str | None = None,
-              max_tokens: int = 2048, temperature: float = 0.7) -> Any:
+def call_json(prompt: str, *, system: str = "", role: str | None = None,
+              model: str | None = None, max_tokens: int = 2048,
+              temperature: float = 0.7) -> Any:
     """Call the model and parse JSON out of its response.
 
-    We instruct the model to wrap JSON in ```json fences, then strip them.
-    Trades a small amount of robustness for not needing tool_use plumbing.
+    Instructs the model to wrap JSON in ```json fences. Falls back to
+    brace-matched JSON when output is truncated and the closing fence is
+    missing — `max_tokens` is the usual culprit.
     """
     fenced_prompt = (prompt
                      + "\n\nReply with a valid JSON object wrapped in "
                        "```json ... ``` fences. Nothing else.")
-    raw = call(fenced_prompt, system=system, model=model,
+    raw = call(fenced_prompt, system=system, role=role, model=model,
                max_tokens=max_tokens, temperature=temperature)
 
-    # Prefer a fully-closed ```json ... ``` block; tolerate truncated/unfenced
-    # output by falling back to brace-matched JSON inside `raw`.
     match = re.search(r"```(?:json)?\s*(.+?)```", raw, re.DOTALL)
     if match:
         payload = match.group(1).strip()
