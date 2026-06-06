@@ -90,19 +90,29 @@ st.markdown(
 # ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("Anthropic API key")
+    # CRITICAL: do NOT pre-populate this field from os.environ. Even with
+    # type="password" the rendered DOM value is visible to anyone using
+    # browser DevTools. Each user enters their own key from scratch; the
+    # value lives only in their session.
     if "anthropic_key" not in st.session_state:
-        st.session_state.anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    st.session_state.anthropic_key = st.text_input(
+        st.session_state.anthropic_key = ""
+    user_key = st.text_input(
         "Your Anthropic key",
-        value=st.session_state.anthropic_key,
         type="password",
+        placeholder="sk-ant-...",
+        key="anthropic_key",
         help="Available at console.anthropic.com. Stored only in your "
-             "browser session.",
+             "browser session; never sent to the Benchmate maintainer.",
     )
-    if st.session_state.anthropic_key:
-        os.environ["ANTHROPIC_API_KEY"] = st.session_state.anthropic_key
+    if user_key:
+        # Only set the env var for this Python process if the user provided
+        # a key in this session. Never fall back to a maintainer-set env
+        # var that would leak across sessions.
+        os.environ["ANTHROPIC_API_KEY"] = user_key
         st.caption("Key set for this session.")
     else:
+        # Make sure no leaked key from a previous session lingers
+        os.environ.pop("ANTHROPIC_API_KEY", None)
         st.caption("Required for the Run Benchmate tab.")
 
     st.divider()
