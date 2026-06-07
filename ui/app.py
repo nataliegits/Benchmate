@@ -641,24 +641,184 @@ with tab5:
             )
 
     st.divider()
-    st.markdown("### Live benchmarks (run from the CLI)")
-    st.markdown(
-        "The simulator is free. The next three benchmarks make real API "
-        "calls — keep them on the CLI so you can watch the spend:"
+    st.markdown("### Live benchmarks (real API calls)")
+    st.caption(
+        "These run on the ERAD gold set in `benchmark/gold_set.py` and need "
+        "your Anthropic key (set in the sidebar). Ranking calls use Haiku, "
+        "so the spend is small — the estimates below are upper bounds."
     )
-    st.code(
-        "# Is the LLM judge any good? Accuracy / position-bias / consistency\n"
-        "python -m benchmark.run_benchmark judge-eval --max-pairs 8\n\n"
-        "# Rank the ERAD gold set end-to-end and score it vs the tier order\n"
-        "python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8\n\n"
-        "# Same gold set, fair judge vs naive judge, side by side\n"
-        "python -m benchmark.run_benchmark compare",
-        language="bash",
-    )
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        st.warning(
+            "Set your Anthropic key in the sidebar to enable the buttons below."
+        )
+
+    # ---- 1. Judge accuracy ------------------------------------------------
+    with st.container(border=True):
+        st.markdown(
+            "**1. Judge accuracy** — is the LLM judge any good? "
+            "Measures accuracy on clear cross-tier pairs, position-bias rate "
+            "(how often the verdict flips when you swap A/B), self-consistency, "
+            "and transitivity violations."
+        )
+        je_pairs = st.slider("Cross-tier pairs to test", 4, 12, 8,
+                             key="je_pairs",
+                             help="More pairs = tighter estimates but more spend.")
+        je_cost = 0.001 * (je_pairs * 4 + 30)        # ~4 calls/pair + transitivity sweep
+        st.caption(f"Estimated Anthropic spend: ~${je_cost:.2f}. "
+                   f"Expected runtime: ~{max(1, je_pairs // 2)}–"
+                   f"{je_pairs} minutes.")
+        if st.button("Run judge-eval", type="primary",
+                     disabled=not os.environ.get("ANTHROPIC_API_KEY"),
+                     key="je_btn"):
+            from benchmark.judge_eval import evaluate_judge
+            with st.spinner("Judging gold-set pairs in both orders…"):
+                r = evaluate_judge(max_pairs=int(je_pairs), role="ranking")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("accuracy", f"{r.accuracy:.0%}",
+                      help="Want > 80% on clear pairs.")
+            c2.metric("position bias", f"{r.position_bias_rate:.0%}",
+                      help="Want < 15%. Verdicts that flip with A/B order.")
+            c3.metric("self-consistency", f"{r.self_consistency:.0%}",
+                      help="Want > 85%. Same call twice agrees.")
+            tv = (f"{r.transitivity_violations}/{r.transitivity_triples}"
+                  if r.transitivity_triples else "n/a")
+            c4.metric("transitivity", tv,
+                      help="Want ~0 cycles (A>B>C>A).")
+            if r.accuracy < 0.8 or r.position_bias_rate > 0.15:
+                st.info(
+                    "The judge is the bottleneck. The fair judge (default) "
+                    "is already neutralising bias; a stronger ranking model "
+                    "(Sonnet via `BENCHMATE_MODEL_RANKING`) is the next "
+                    "lever."
+                )
+
+    # ---- 2. Validate vs gold ---------------------------------------------
+    with st.container(border=True):
+        st.markdown(
+            "**2. Validate vs gold** — rank the ERAD gold set end-to-end "
+            "and score the leaderboard against the known tier order. Use "
+            "as a regression test after any prompt or model change."
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            va_cycles = st.slider("Cycles", 2, 10, 6, key="va_cycles")
+        with col_b:
+            va_npc = st.slider("Matches per cycle", 4, 12, 8, key="va_npc")
+        va_calls = va_cycles * va_npc * 2            # fair judge = 2 calls/match
+        va_cost = 0.001 * va_calls
+        st.caption(f"~{va_calls} judge calls. Estimated spend: ~${va_cost:.2f}. "
+                   f"Runtime: a few minutes.")
+        if st.button("Run validate", type="primary",
+                     disabled=not os.environ.get("ANTHROPIC_API_KEY"),
+                     key="va_btn"):
+            from benchmark.run_benchmark import (run_tournament, _fair_judge_fn,
+                                                  CRITERIA)
+            from benchmark.gold_set import GOLD, gold_hypotheses
+            from benchmark.metrics import spearman, topk_jaccard
+            hyps = gold_hypotheses()
+            with st.spinner(f"Running {va_cycles}×{va_npc} matches with the "
+                             "fair judge…"):
+                run_tournament(hyps, _fair_judge_fn(),
+                                cycles=int(va_cycles),
+                                n_per_cycle=int(va_npc))
+            # Score against gold
+            gold_rank_of = {h.id: i for i, h in enumerate(hyps)}
+            gold_scores = [-gold_rank_of[h.id] for h in hyps]
+            elo_scores = [h.elo for h in hyps]
+            rho = spearman(gold_scores, elo_scores)
+            final = sorted(hyps, key=lambda h: -h.elo)
+            gold_order = [h.id for h in sorted(hyps,
+                                               key=lambda h: gold_rank_of[h.id])]
+            final_order = [h.id for h in final]
+            top1 = final_order[0] == gold_order[0]
+            top3 = topk_jaccard(final_order, gold_order, 3)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("spearman vs gold", f"{rho:+.2f}",
+                      help="1.0 = matches gold tier order exactly.")
+            c2.metric("top-1 correct", "yes" if top1 else "no",
+                      help="Did a tier-A hypothesis finish #1?")
+            c3.metric("top-3 overlap", f"{top3:.0%}")
+
+            import pandas as pd
+            rows = []
+            for rank, h in enumerate(final, 1):
+                tier = GOLD[next(i for i, x in enumerate(hyps)
+                                 if x.id == h.id)]["tier"]
+                rows.append({
+                    "rank": rank,
+                    "tier": tier,
+                    "Elo": round(h.elo, 0),
+                    "statement": h.statement,
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                         hide_index=True)
+
+    # ---- 3. Compare fair vs naive ----------------------------------------
+    with st.container(border=True):
+        st.markdown(
+            "**3. Compare fair vs naive judge** — same gold set, ranked "
+            "under both judges. Δ Spearman tells you whether the "
+            "order-swap is actually buying accuracy."
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            cm_cycles = st.slider("Cycles", 2, 10, 6, key="cm_cycles")
+        with col_b:
+            cm_npc = st.slider("Matches per cycle", 4, 12, 8, key="cm_npc")
+        cm_calls = cm_cycles * cm_npc * 3            # naive 1× + fair 2× per match
+        cm_cost = 0.001 * cm_calls
+        st.caption(f"~{cm_calls} judge calls (naive once + fair twice per "
+                   f"match). Estimated spend: ~${cm_cost:.2f}.")
+        if st.button("Run compare", type="primary",
+                     disabled=not os.environ.get("ANTHROPIC_API_KEY"),
+                     key="cm_btn"):
+            from benchmark.run_benchmark import (run_tournament,
+                                                  _fair_judge_fn,
+                                                  _naive_judge_fn)
+            from benchmark.gold_set import gold_hypotheses
+            from benchmark.metrics import spearman
+
+            def score(hyps):
+                gold_rank_of = {h.id: i for i, h in enumerate(hyps)}
+                return spearman([-gold_rank_of[h.id] for h in hyps],
+                                [h.elo for h in hyps])
+
+            with st.spinner("Running naive judge…"):
+                h1 = gold_hypotheses()
+                run_tournament(h1, _naive_judge_fn(),
+                                cycles=int(cm_cycles),
+                                n_per_cycle=int(cm_npc))
+                rho_naive = score(h1)
+            with st.spinner("Running fair judge…"):
+                h2 = gold_hypotheses()
+                run_tournament(h2, _fair_judge_fn(),
+                                cycles=int(cm_cycles),
+                                n_per_cycle=int(cm_npc))
+                rho_fair = score(h2)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("naive judge — spearman", f"{rho_naive:+.2f}")
+            c2.metric("fair judge — spearman", f"{rho_fair:+.2f}")
+            c3.metric("Δ (fair − naive)", f"{rho_fair - rho_naive:+.2f}",
+                      delta=f"{rho_fair - rho_naive:+.2f}")
+            if rho_fair > rho_naive:
+                st.success("Fair judge ranks closer to the gold tier order.")
+            elif rho_fair < rho_naive:
+                st.warning(
+                    "Fair judge underperformed in this run. Re-run a few "
+                    "times — a single comparison is one noisy sample. "
+                    "Trust the median of 3+ runs."
+                )
+
+    st.divider()
     st.caption(
         "Full plan and recommended sequence of work: "
         "[benchmark/BENCHMARKING_PLAN.md]"
         "(https://github.com/nataliegits/Benchmate/blob/main/benchmark/"
         "BENCHMARKING_PLAN.md). Gold set lives in `benchmark/gold_set.py` "
-        "(currently ERAD / bortezomib-resistant multiple myeloma)."
+        "(currently ERAD / bortezomib-resistant multiple myeloma). "
+        "The same benchmarks also run as CLI commands "
+        "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
