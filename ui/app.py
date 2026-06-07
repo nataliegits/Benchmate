@@ -196,11 +196,12 @@ with st.sidebar:
 # ────────────────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "New perturbation",
     "Inspect cache",
     "Run Benchmate",
     "Hermes preview",
+    "Benchmark",
 ])
 
 # ── Tab 1 ────────────────────────────────────────────────────
@@ -504,4 +505,160 @@ with tab4:
         "chat-driven, deploy Hermes on a small VPS and register a skill "
         "that wraps the CLI. The full guide is in "
         "[HERMES.md](https://github.com/nataliegits/Benchmate/blob/main/HERMES.md)."
+    )
+
+# ── Tab 5 ────────────────────────────────────────────────────
+with tab5:
+    st.header("Is the Elo leaderboard trustworthy?")
+    st.write(
+        "The simulator replays Benchmate's **real** `elo.py` against synthetic "
+        "hypotheses whose true quality we control — for free, thousands of "
+        "times — so you can see how match budget, K-factor, and judge skill "
+        "move ranking accuracy and repeatability before spending API credits."
+    )
+    st.caption(
+        "Reads as: **spearman**→ranking accuracy vs ground truth "
+        "(1.0=perfect), **top1**→true best ends #1, **repeat**→two runs pick "
+        "the same winner, **churn**→rank movement in the final cycle "
+        "(→0 = converged)."
+    )
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        sim_n = st.slider("Hypotheses (n)", 4, 12, 6,
+                          help="How many hypotheses are in the simulated tournament.")
+    with col_b:
+        sim_skill = st.slider("Judge skill", 0.55, 0.90, 0.70, 0.05,
+                              help=("P(judge picks the better of two adjacent "
+                                    "hypotheses). 0.5 = coin flip; ~0.70 is "
+                                    "decent. Measure your real judge with "
+                                    "`judge-eval` and feed the number back in."))
+    with col_c:
+        sim_replicates = st.select_slider(
+            "Replicates", options=[50, 100, 200, 300], value=200,
+            help="More replicates = tighter error bars but a slower run."
+        )
+
+    st.markdown("**Pick a study** — what question do you want the simulator to answer?")
+    study = st.radio(
+        "Study",
+        ["Match budget — how many matches do I need?",
+         "K-factor — does the 40/20/10 schedule matter?",
+         "Judge quality — how badly does a weak / biased judge hurt?"],
+        label_visibility="collapsed",
+    )
+
+    if st.button("Run simulator", type="primary"):
+        from benchmark.simulate import (evaluate, CURRENT_K, k_const,
+                                         k_schedule)
+
+        rows: list[dict] = []
+        with st.spinner("Replaying tournaments…"):
+            if study.startswith("Match budget"):
+                configs = [(1, 6, "1 round (12 matches)"),
+                           (2, 6, "2 rounds (24 matches)"),
+                           (4, 6, "4 rounds (48 matches)"),
+                           (6, 8, "6 rounds, 8/cycle (96)"),
+                           (10, 10, "10 rounds, 10/cycle (200)")]
+                for cycles, npc, lbl in configs:
+                    s = evaluate(lbl, replicates=sim_replicates,
+                                 n=sim_n, cycles=cycles, n_per_cycle=npc,
+                                 judge_skill=sim_skill)
+                    rows.append({
+                        "config": s.label,
+                        "matches/hyp": round(s.matches_per_hyp, 1),
+                        "spearman": round(s.mean_spearman, 2),
+                        "± sd": round(s.sd_spearman, 2),
+                        "top1": f"{s.top1_accuracy:.0%}",
+                        "top3": f"{s.top3_accuracy:.0%}",
+                        "repeat": f"{s.repeatability:.0%}",
+                        "churn": round(s.final_churn, 2),
+                    })
+            elif study.startswith("K-factor"):
+                configs = [("current 40/20/10", CURRENT_K),
+                           ("constant K=32 (FIDE)", k_const(32)),
+                           ("constant K=16", k_const(16)),
+                           ("gentle 24/16/8",
+                            k_schedule([(5, 24), (15, 16)], 8)),
+                           ("hot 64/32/16",
+                            k_schedule([(5, 64), (15, 32)], 16))]
+                for lbl, k_fn in configs:
+                    s = evaluate(lbl, replicates=sim_replicates,
+                                 n=sim_n, cycles=4, n_per_cycle=6,
+                                 judge_skill=sim_skill, k_fn=k_fn)
+                    rows.append({
+                        "config": s.label,
+                        "matches/hyp": round(s.matches_per_hyp, 1),
+                        "spearman": round(s.mean_spearman, 2),
+                        "± sd": round(s.sd_spearman, 2),
+                        "top1": f"{s.top1_accuracy:.0%}",
+                        "top3": f"{s.top3_accuracy:.0%}",
+                        "repeat": f"{s.repeatability:.0%}",
+                        "churn": round(s.final_churn, 2),
+                    })
+            else:  # judge quality
+                configs = [("strong (skill 80%)", 0.80, 0.0),
+                           ("decent (skill 70%)", 0.70, 0.0),
+                           ("weak (skill 60%)", 0.60, 0.0),
+                           ("decent + 15% position bias", 0.70, 0.15)]
+                for lbl, skill_v, pbias in configs:
+                    s = evaluate(lbl, replicates=sim_replicates,
+                                 n=sim_n, cycles=4, n_per_cycle=6,
+                                 judge_skill=skill_v, position_bias=pbias)
+                    rows.append({
+                        "config": s.label,
+                        "matches/hyp": round(s.matches_per_hyp, 1),
+                        "spearman": round(s.mean_spearman, 2),
+                        "± sd": round(s.sd_spearman, 2),
+                        "top1": f"{s.top1_accuracy:.0%}",
+                        "top3": f"{s.top3_accuracy:.0%}",
+                        "repeat": f"{s.repeatability:.0%}",
+                        "churn": round(s.final_churn, 2),
+                    })
+
+        import pandas as pd
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True)
+
+        if study.startswith("Match budget"):
+            st.info(
+                "**Read:** top-3 is reliable around ~8 matches/hyp; a "
+                "trustworthy *#1* needs ~12+. Your `state.json` today shows "
+                "~2 matches/hyp."
+            )
+        elif study.startswith("K-factor"):
+            st.info(
+                "**Read:** at this scale the K-factor barely moves the "
+                "metrics. The 40/20/10 schedule, flat K=16, and flat K=32 "
+                "are within noise. Match budget is the lever, not K."
+            )
+        else:
+            st.info(
+                "**Read:** judge skill is the accuracy ceiling — improving "
+                "the judge buys as much as doubling the match budget. The "
+                "fair judge (default) neutralises position bias by judging "
+                "each pair in both orders."
+            )
+
+    st.divider()
+    st.markdown("### Live benchmarks (run from the CLI)")
+    st.markdown(
+        "The simulator is free. The next three benchmarks make real API "
+        "calls — keep them on the CLI so you can watch the spend:"
+    )
+    st.code(
+        "# Is the LLM judge any good? Accuracy / position-bias / consistency\n"
+        "python -m benchmark.run_benchmark judge-eval --max-pairs 8\n\n"
+        "# Rank the ERAD gold set end-to-end and score it vs the tier order\n"
+        "python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8\n\n"
+        "# Same gold set, fair judge vs naive judge, side by side\n"
+        "python -m benchmark.run_benchmark compare",
+        language="bash",
+    )
+    st.caption(
+        "Full plan and recommended sequence of work: "
+        "[benchmark/BENCHMARKING_PLAN.md]"
+        "(https://github.com/nataliegits/Benchmate/blob/main/benchmark/"
+        "BENCHMARKING_PLAN.md). Gold set lives in `benchmark/gold_set.py` "
+        "(currently ERAD / bortezomib-resistant multiple myeloma)."
     )
