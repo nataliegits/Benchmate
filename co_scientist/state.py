@@ -59,6 +59,7 @@ class CoScientistState(TypedDict, total=False):
     hypotheses: list[Hypothesis]
     iteration: int
     max_iterations: int
+    n_matches: int                    # tournament matches per ranking round
     meta_critique: MetaCritique
     next_action: str                  # which agent to run next
 

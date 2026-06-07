@@ -56,21 +56,33 @@ def main() -> int:
     ap.add_argument("--resume", action="store_true",
                     help="Resume from state.json if present")
     ap.add_argument("--max-iterations", type=int, default=12)
+    ap.add_argument("--n-matches", type=int, default=8,
+                    help="Tournament matches per ranking round. Higher = a more "
+                         "stable leaderboard (aim for ~12 matches/hypothesis "
+                         "across the whole run). See benchmark/BENCHMARKING_PLAN.md.")
+    ap.add_argument("--naive-judge", action="store_true",
+                    help="Use the original single-pass judge instead of the "
+                         "order-swapped fair judge (faster, but position-biased).")
     ap.add_argument("--state-file", default="state.json")
     args = ap.parse_args()
 
     if args.resume and Path(args.state_file).exists():
         state = st.load(args.state_file)
+        state["n_matches"] = args.n_matches      # let the CLI flag apply on resume
         console.print(f"[green]Resumed[/] from {args.state_file} "
                       f"(iter {state.get('iteration', 0)})")
     elif args.goal:
         state = {"research_goal": args.goal,
-                 "max_iterations": args.max_iterations}
+                 "max_iterations": args.max_iterations,
+                 "n_matches": args.n_matches}
     else:
         ap.print_usage()
         return 1
 
-    graph = build_graph(max_iterations=args.max_iterations)
+    graph = build_graph(max_iterations=args.max_iterations,
+                        use_fair_judge=not args.naive_judge)
+    console.print(f"[dim]judge={'fair (order-swapped)' if not args.naive_judge else 'naive'}"
+                  f" · {args.n_matches} matches/ranking round[/]")
     final = graph.invoke(state, {"recursion_limit": 200})
 
     print_top(final, top_n=5)

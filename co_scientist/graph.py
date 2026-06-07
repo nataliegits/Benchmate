@@ -15,13 +15,23 @@ from . import agents
 from .state import CoScientistState
 
 
-def build_graph(max_iterations: int = 12):
+def build_graph(max_iterations: int = 12, use_fair_judge: bool = True):
     g = StateGraph(CoScientistState)
+
+    # The Ranking node decides each pairwise match. The fair judge (default)
+    # judges every pair in BOTH orders and only awards a win when the two
+    # passes agree — neutralising position bias and scoring flips as draws.
+    # Set use_fair_judge=False to fall back to the original single-pass judge.
+    if use_fair_judge:
+        from benchmark.fair_judge import ranking_fair
+        ranking_node = ranking_fair
+    else:
+        ranking_node = agents.ranking
 
     g.add_node("supervisor", agents.supervisor)
     g.add_node("generation", agents.generation)
     g.add_node("reflection", agents.reflection)
-    g.add_node("ranking", agents.ranking)
+    g.add_node("ranking", ranking_node)
     g.add_node("evolution", agents.evolution)
     g.add_node("meta_review", agents.meta_review)
     g.add_node("proximity", agents.proximity)

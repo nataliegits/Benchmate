@@ -186,7 +186,7 @@ def reflection(state: CoScientistState) -> dict[str, Any]:
 
 def ranking(state: CoScientistState) -> dict[str, Any]:
     hypotheses = state["hypotheses"]
-    matches = schedule_matches(hypotheses, n_matches=6)
+    matches = schedule_matches(hypotheses, n_matches=state.get("n_matches", 8))
     criteria = state["plan_config"].get("evaluation_criteria",
                                         ["novelty", "plausibility", "testability"])
     crit_str = ", ".join(criteria)

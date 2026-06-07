@@ -27,6 +27,14 @@ Benchmate/
 │   ├── agents.py           # the 7 agents (Generation reads Geneformer cache,
 │   │                       # Reflection fact-checks against it)
 │   └── graph.py            # LangGraph wiring of the supervisor loop
+├── benchmark/              # Is the Elo leaderboard trustworthy? (see below)
+│   ├── simulate.py         # free Monte Carlo over the real elo.py
+│   ├── metrics.py          # Spearman, top-k, churn, transitivity
+│   ├── fair_judge.py       # order-swapped, bias-aware judge (drop-in)
+│   ├── judge_eval.py       # live judge accuracy / position-bias / consistency
+│   ├── gold_set.py         # tier A/B/C gold hypotheses for validation
+│   ├── run_benchmark.py    # CLI: simulate | judge-eval | validate | compare
+│   └── BENCHMARKING_PLAN.md
 ├── notebooks/              # Geneformer perturbation notebooks (Colab)
 │   ├── 01_geneformer_erad_perturbation.ipynb
 │   └── 02_geneformer_ciliated_cells.ipynb
@@ -93,6 +101,50 @@ To populate the cache:
   via the UI's Upload CSVs sidebar, or via `ui/watcher.py`).
 
 See `data/geneformer/README.md` for the expected CSV schema.
+
+## Benchmarking the Elo tournament
+
+`benchmark/` answers the question Benchmate's headline number depends on: when
+the leaderboard says hypothesis X is #1, is X actually the best, and would a
+re-run agree? Four entry points:
+
+```bash
+# FREE — no API key. Monte Carlo over the real elo.py with synthetic
+# hypotheses whose true quality we control. Shows how match budget,
+# K-factor, and judge skill move ranking accuracy and repeatability.
+python -m benchmark.run_benchmark simulate
+
+# LIVE — needs ANTHROPIC_API_KEY. Measures the real judge on a small
+# tiered gold set: accuracy on clear pairs, position-bias rate,
+# self-consistency, transitivity violations.
+python -m benchmark.run_benchmark judge-eval --max-pairs 8
+
+# LIVE — rank the gold set end-to-end and score the leaderboard
+# against the known tier order. Use as a regression test after any
+# prompt or model change.
+python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8
+
+# LIVE — same gold set, fair judge vs the current naive judge,
+# side by side.
+python -m benchmark.run_benchmark compare
+```
+
+Highlights from the free simulator (n=6, judge skill 70%, 300 replicates):
+the dominant lever is match count, not K-factor. At ~2 matches/hypothesis
+(your `state.json` today) Spearman vs ground truth is ~0.20 and the true
+best lands #1 about 0% of the time; at 12 matches/hypothesis Spearman is
+0.93 and #1 is correct 85% of the time. The 40/20/10 K-schedule, flat
+K=16, and flat K=32 are within noise of each other at this scale.
+
+`fair_judge.ranking_fair` is now the default ranking node in
+`co_scientist/graph.py` — it judges each pair twice with the order swapped
+and scores as a draw when the verdict flips. Pass `--naive-judge` to
+`run.py` to fall back to the original single-pass judge. The match budget
+per ranking round is exposed as `--n-matches` (default 8); aim for ~12
+matches per hypothesis across the whole run.
+
+Full plan, evidence, and recommended sequence of work in
+[`benchmark/BENCHMARKING_PLAN.md`](benchmark/BENCHMARKING_PLAN.md).
 
 ## Multi-model routing
 
