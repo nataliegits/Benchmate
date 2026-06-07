@@ -137,19 +137,113 @@ fine, because they're Haiku, and you're spending the savings on correctness.
 
 ---
 
-## Recommended order of work
+## The 6-step validation protocol
 
-1. **Wire up `validate` and `judge-eval`** (live, small). Get today's baseline
-   numbers — you can't improve what you haven't measured.
-2. **Switch to `fair_judge`** and re-run `judge-eval`. Confirm position-bias drops.
-3. **Raise the match budget** to ~12 matches/hyp (bump `n_matches`, and/or let
-   `ranking` run on more iterations). Re-run `validate`.
-4. **Re-baseline `compare`** for the configs you care about (Geneformer on/off,
-   judge model). Lock in whatever beats gold by more than the noise band.
-5. *(Optional, later)* If you scale to many more hypotheses, revisit the rating
-   system itself — Glicko-2 adds a rating-deviation term (uncertainty per
-   hypothesis), which is more sample-efficient than plain Elo at small match
-   counts. Not worth it yet.
+"Accurate" has layers, and each test rules out a different failure. Run them
+in this order — cheapest and most foundational first. Every step is wired
+into both the Streamlit Benchmark tab and the `python -m benchmark.run_benchmark`
+CLI; pick whichever is easier.
+
+### 1. Math sanity check (free, simulator)
+
+Set the judge skill near 1.0 (a perfect referee) and give it plenty of
+matches. The ranking must come back at Spearman ≈ 1.0 with zero transitivity
+violations. If a flawless judge with lots of matches *can't* recover the true
+order, the bug is in the Elo code, not your settings. This is the unit test
+— it isolates "is the math implemented right?" from everything else.
+
+**How to run:** in the Benchmark tab, set *judge skill* = 0.90 and pick the
+**Match budget** study (the largest budget row exercises the math). Or call
+`evaluate(judge_skill=0.99, cycles=10, n_per_cycle=10, replicates=200)`
+directly. The simulator clamps internally to `judge_skill ≤ 0.9999`, so use
+0.99 to push to the ceiling.
+
+### 2. Match-budget sweep at your real `n` (free, simulator)
+
+Run the match-budget study at the number of hypotheses your app actually
+generates. This is the curve already in the simulator: where Spearman / top-3
+/ top-1 cross into "trustworthy." The output is a concrete number — the
+matches-per-hypothesis you need.
+
+**Pass bar:** Spearman > ~0.9 and top-3 ≈ 100% at your chosen budget; aim
+higher (top-1 > ~90%) if your demo headlines a single winner.
+
+**How to run:** Benchmark tab → **Match budget — how many matches do I need?**
+Or CLI `python -m benchmark.run_benchmark simulate`. Pin the judge-skill
+slider to whatever you measured in step 3 (the default 0.70 is an optimistic
+guess, not a measurement).
+
+### 3. Judge accuracy — the live referee test
+
+This is the linchpin, because the simulator only *assumes* judge skill; this
+*measures* it.
+
+**Targets:** accuracy > 80% on clear pairs, position bias < 15%,
+self-consistency > 85%, transitivity violations ≈ 0.
+
+If this fails, stop — no match budget can rescue a bad referee. The fix is
+the fair judge (already the default) and/or a stronger ranking model
+(`BENCHMATE_MODEL_RANKING=anthropic/claude-sonnet-4-6`). Once it passes,
+feed the measured accuracy back into the simulator as the `judge_skill`
+knob, so step 2's budget number reflects your *real* judge.
+
+**How to run:** Benchmark tab → **Judge accuracy**. Or CLI
+`python -m benchmark.run_benchmark judge-eval --max-pairs 8`.
+
+### 4. End-to-end validation against ground truth (live)
+
+Run a full real ranking on the gold set at the budget from step 2.
+
+**Pass bar:** Spearman vs gold > ~0.9, and the #1 is a tier-A hypothesis
+(not a tier-C one sneaking up).
+
+This is the test that actually answers "do good hypotheses win in practice,"
+combining the real judge + the real Elo loop.
+
+**How to run:** Benchmark tab → **Validate vs gold**. Or CLI
+`python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8`.
+Edit `benchmark/gold_set.py` so the tiered hypotheses match your domain
+(the shipped set is ERAD / bortezomib-resistant multiple myeloma).
+
+### 5. Reproducibility (live, cheap repeat)
+
+Run step 4 three times. The top hypothesis — ideally the whole top-3 set —
+should be stable across runs. This catches the trap your `state.json`
+exposed: a ranking can be repeatable but wrong at low budgets, so you check
+reproducibility *and* accuracy together. If runs disagree on #1, you're
+under-budgeted; go back to step 2.
+
+### 6. Robustness to the known failure mode (live)
+
+Compare fair judge vs naive judge on the gold set. The fair judge should
+match gold at least as well (Δ Spearman ≥ ~0, within noise) and show lower
+position bias. This confirms the bias fix *helps* rather than just changing
+the answer.
+
+**How to run:** Benchmark tab → **Compare fair vs naive**. Or CLI
+`python -m benchmark.run_benchmark compare`. Read the median of ≥3 runs,
+not a single Δ — comparison is noisy.
+
+### Putting it together
+
+Measure the judge (3) → plug its real skill into the simulator (2) → that
+tells you the match budget → set it in the app (`--n-matches`) → validate
+end-to-end (4) → confirm it reproduces (5).
+
+Steps 1, 2, 3, 6 you run **once** when you change models or settings;
+steps 4–5 you re-run as a **regression check** after any change to prompts,
+the judge model, or the match budget.
+
+The honest one-liner: you can't prove a ranking is right by looking at the
+ranking — you prove it by checking that a known-good answer wins, that it
+wins again when you re-run, and that your referee passes its own exam first.
+
+## Future work, if you scale up
+
+If you grow to many more hypotheses, revisit the rating system itself —
+Glicko-2 adds a per-hypothesis rating-deviation term, which is more
+sample-efficient than plain Elo at small match counts. Not worth it at the
+current scale.
 
 ## Notes / caveats on the simulator
 

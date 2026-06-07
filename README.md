@@ -104,47 +104,49 @@ See `data/geneformer/README.md` for the expected CSV schema.
 
 ## Benchmarking the Elo tournament
 
-`benchmark/` answers the question Benchmate's headline number depends on: when
-the leaderboard says hypothesis X is #1, is X actually the best, and would a
-re-run agree? Four entry points:
+Benchmarks are built in. Benchmate ships its own toolkit for the question
+its headline number depends on — when the leaderboard says hypothesis X is
+#1, is X actually the best, and would a re-run agree? Same four entry
+points are available **two ways**, no separate install:
 
-```bash
-# FREE — no API key. Monte Carlo over the real elo.py with synthetic
-# hypotheses whose true quality we control. Shows how match budget,
-# K-factor, and judge skill move ranking accuracy and repeatability.
-python -m benchmark.run_benchmark simulate
+- **Streamlit app, *Benchmark* tab.** The free simulator runs in-browser
+  in seconds (no API key). The live benchmarks have their own buttons,
+  show an upper-bound cost estimate, and read your API key from the
+  sidebar.
+- **CLI**, for scripting and regression runs:
+  ```bash
+  python -m benchmark.run_benchmark simulate     # FREE — Monte Carlo over the real elo.py
+  python -m benchmark.run_benchmark judge-eval   # LIVE — is the real LLM judge any good?
+  python -m benchmark.run_benchmark validate     # LIVE — rank the gold set, score vs tier order
+  python -m benchmark.run_benchmark compare      # LIVE — fair vs naive judge, side by side
+  ```
 
-# LIVE — needs ANTHROPIC_API_KEY. Measures the real judge on a small
-# tiered gold set: accuracy on clear pairs, position-bias rate,
-# self-consistency, transitivity violations.
-python -m benchmark.run_benchmark judge-eval --max-pairs 8
+The gold set in `benchmark/gold_set.py` is ERAD / bortezomib-resistant
+multiple myeloma (tiered A > B > C); swap it for your own domain.
 
-# LIVE — rank the gold set end-to-end and score the leaderboard
-# against the known tier order. Use as a regression test after any
-# prompt or model change.
-python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8
+### How to actually prove the ranking is accurate
 
-# LIVE — same gold set, fair judge vs the current naive judge,
-# side by side.
-python -m benchmark.run_benchmark compare
-```
-
-Highlights from the free simulator (n=6, judge skill 70%, 300 replicates):
-the dominant lever is match count, not K-factor. At ~2 matches/hypothesis
-(your `state.json` today) Spearman vs ground truth is ~0.20 and the true
-best lands #1 about 0% of the time; at 12 matches/hypothesis Spearman is
-0.93 and #1 is correct 85% of the time. The 40/20/10 K-schedule, flat
-K=16, and flat K=32 are within noise of each other at this scale.
-
-`fair_judge.ranking_fair` is now the default ranking node in
-`co_scientist/graph.py` — it judges each pair twice with the order swapped
-and scores as a draw when the verdict flips. Pass `--naive-judge` to
-`run.py` to fall back to the original single-pass judge. The match budget
-per ranking round is exposed as `--n-matches` (default 8); aim for ~12
-matches per hypothesis across the whole run.
-
-Full plan, evidence, and recommended sequence of work in
+Benchmate follows a six-step protocol from "is the math right?" to "does
+the real loop pick the right hypothesis?" — math sanity → match-budget
+sweep → live judge accuracy → end-to-end validation → reproducibility →
+robustness to the known failure mode. Full protocol with pass bars and
+which tool to run at each step is in
 [`benchmark/BENCHMARKING_PLAN.md`](benchmark/BENCHMARKING_PLAN.md).
+
+### What the free simulator already tells you
+
+The dominant lever is match count, not K-factor. At ~2 matches/hypothesis
+(default state) Spearman vs ground truth is ~0.20 and the true best lands
+#1 about 0% of the time; at ~12 matches/hypothesis Spearman is 0.93 and
+#1 is correct 85% of the time. The 40/20/10 K-schedule, flat K=16, and
+flat K=32 are within noise of each other at this scale.
+
+`benchmark/fair_judge.ranking_fair` is the default ranking node in
+`co_scientist/graph.py` — it judges each pair twice with the order
+swapped and scores a draw when the verdict flips. Pass `--naive-judge`
+to `run.py` to fall back. The per-round match budget is exposed as
+`--n-matches` (default 8); aim for ~12 matches per hypothesis across
+the whole run.
 
 ## Multi-model routing
 
