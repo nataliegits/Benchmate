@@ -18,5 +18,7 @@ if _PROJECT_ROOT not in sys.path:
 from benchmark.demo_walkthrough import main
 
 if __name__ == "__main__":
-    sys.argv = [sys.argv[0], "--skill", "0.50"]
+    # Same 16 rounds as the good-referee run, so the only thing that differs is
+    # the referee's skill — the noise alone drives the spearman to the floor.
+    sys.argv = [sys.argv[0], "--skill", "0.50", "--rounds", "16"]
     main()

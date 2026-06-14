@@ -18,5 +18,7 @@ if _PROJECT_ROOT not in sys.path:
 from benchmark.demo_walkthrough import main
 
 if __name__ == "__main__":
-    sys.argv = [sys.argv[0], "--skill", "0.85"]
+    # 16 rounds so the Elo ratings actually converge — at the default 4 rounds
+    # each hypothesis plays too few matches and even a good referee scores low.
+    sys.argv = [sys.argv[0], "--skill", "0.85", "--rounds", "16"]
     main()
