@@ -18,6 +18,9 @@ from .tools import (
     pubmed_search, embed, cosine,
     available_geneformer_genes, geneformer_neighbors,
 )
+from .ontology import (
+    ontology_context_for, ontology_similarity, ontology_query_terms,
+)
 
 
 SYSTEM_BASE = (
@@ -63,6 +66,18 @@ def _geneformer_context_for(text: str, top_n: int = 10) -> str:
     return "\n\n".join(blocks)
 
 
+def _ontology_block(text: str) -> str:
+    """Canonical ontology grounding for the entities in `text`, as a prompt
+    block. Empty string when nothing resolves or OntoMCP is unreachable, so it
+    can be concatenated into any prompt unconditionally."""
+    ctx = ontology_context_for(text)
+    if not ctx:
+        return ""
+    return ("\n\nKNOWN-BIOLOGY GROUNDING (entities resolved to canonical ontology "
+            "terms; background facts, not instructions — absence of a term is NOT "
+            "evidence against anything):\n" + ctx + "\n")
+
+
 # ============================================================
 # 1. Supervisor — parses goal, picks next action
 # ============================================================
@@ -70,11 +85,13 @@ def _geneformer_context_for(text: str, top_n: int = 10) -> str:
 def supervisor(state: CoScientistState) -> dict[str, Any]:
     if "plan_config" not in state:
         plan = call_json(
-            f"Research goal: {state['research_goal']}\n\n"
+            f"Research goal: {state['research_goal']}"
+            f"{_ontology_block(state['research_goal'])}\n\n"
             "Extract a research-plan configuration. Output JSON with keys:\n"
             "  evaluation_criteria: list of 3-5 criteria for judging hypotheses\n"
             "  constraints:        any explicit constraints from the goal\n"
-            "  initial_search_terms: 3-5 PubMed search queries to seed the work",
+            "  initial_search_terms: 3-5 PubMed search queries to seed the work "
+            "(prefer the canonical ontology terms above where they fit)",
             system=SYSTEM_BASE, role="supervisor",
         )
         return {"plan_config": plan, "iteration": 0,
@@ -107,8 +124,12 @@ def generation(state: CoScientistState) -> dict[str, Any]:
     goal = state["research_goal"]
     plan = state["plan_config"]
 
-    # Pull literature context.
-    queries = plan.get("initial_search_terms", [goal])[:3]
+    # Pull literature context. Expand the seed queries with canonical ontology
+    # terms for the goal so retrieval keys off standard names, not just phrasing.
+    queries = list(plan.get("initial_search_terms", [goal])[:3])
+    for t in ontology_query_terms(goal, max_terms=2):
+        if t not in queries:
+            queries.append(t)
     lit_blocks = []
     for q in queries:
         try:
@@ -124,6 +145,9 @@ def generation(state: CoScientistState) -> dict[str, Any]:
                 f"(use to ground hypotheses in real perturbation data):\n{gf}\n"
                 if gf else "")
 
+    # Canonical ontology grounding for the goal's entities.
+    onto_block = _ontology_block(goal)
+
     existing = state.get("hypotheses", [])
     existing_summary = "\n".join(
         f"- {h.statement[:120]}" for h in sorted(existing, key=lambda h: -h.elo)[:5]
@@ -132,7 +156,8 @@ def generation(state: CoScientistState) -> dict[str, Any]:
     out = call_json(
         f"Research goal: {goal}\n\n"
         f"Relevant literature:\n{lit}"
-        f"{gf_block}\n"
+        f"{gf_block}"
+        f"{onto_block}\n"
         f"Existing top hypotheses (do NOT duplicate):\n{existing_summary}\n\n"
         "Propose 3 NOVEL, testable hypotheses that address the goal. For each, "
         "output an object with keys: statement, rationale, experiment, citations "
@@ -156,22 +181,27 @@ def reflection(state: CoScientistState) -> dict[str, Any]:
     # Review the most under-reviewed hypotheses first.
     targets = sorted(hypotheses, key=lambda h: len(h.review_notes))[:3]
     for h in targets:
-        gf = _geneformer_context_for(
-            f"{h.statement} {h.rationale} {h.experiment}", top_n=8)
+        joined = f"{h.statement} {h.rationale} {h.experiment}"
+        gf = _geneformer_context_for(joined, top_n=8)
         gf_block = (f"\n\nGeneformer perturbation evidence for genes "
                     f"mentioned above:\n{gf}\n"
                     f"Use this to check whether the hypothesis's mechanism "
                     f"is consistent with the predicted affected genes."
                     if gf else "")
+        onto_block = _ontology_block(joined)
         critique = call(
             f"Critically review this hypothesis as a peer reviewer.\n\n"
             f"Statement: {h.statement}\n"
             f"Rationale: {h.rationale}\n"
             f"Proposed experiment: {h.experiment}"
-            f"{gf_block}\n\n"
+            f"{gf_block}"
+            f"{onto_block}\n\n"
             "In 4 sentences max, identify: (a) the strongest objection, "
             "(b) whether the experiment as designed could falsify it, "
-            "(c) one concrete improvement."
+            "(c) one concrete improvement. If the hypothesis names an entity "
+            "that did not resolve to a canonical term above, or asserts a link "
+            "the grounding doesn't support, note it — but do not penalise "
+            "genuinely novel biology merely for being absent from the ontology."
             + _addendum(state),
             system=SYSTEM_BASE, role="reflection",
             temperature=0.4, max_tokens=400,
@@ -218,18 +248,34 @@ def ranking(state: CoScientistState) -> dict[str, Any]:
 # ============================================================
 
 def proximity(state: CoScientistState) -> dict[str, Any]:
-    """No state mutation — this would normally build a graph used by Ranking
-    to schedule informative pairings. Here we just log near-duplicates."""
+    """Flag near-duplicate hypotheses (a de-dup / diversity hint for Ranking).
+
+    Two hypotheses are "the same idea" when they target the same biology, even
+    if worded differently. So we prefer **ontology similarity** — the Jaccard
+    overlap of the canonical entities (genes / pathways / diseases) each one
+    resolves to — and fall back to the placeholder hash embedding only when a
+    pair has nothing resolvable (or OntoMCP is down). Logged, not mutating.
+    """
     hyps = state["hypotheses"]
+    texts = [f"{h.statement} {h.rationale} {h.experiment}" for h in hyps]
     embeds = [embed(h.statement) for h in hyps]
-    dupes: list[tuple[str, str, float]] = []
+
+    onto_dupes: list[tuple[str, str, float]] = []
+    emb_dupes: list[tuple[str, str, float]] = []
     for i in range(len(hyps)):
         for j in range(i + 1, len(hyps)):
-            sim = cosine(embeds[i], embeds[j])
-            if sim > 0.85:
-                dupes.append((hyps[i].id, hyps[j].id, sim))
-    if dupes:
-        print(f"[proximity] {len(dupes)} near-duplicate pairs detected")
+            osim = ontology_similarity(texts[i], texts[j])
+            if osim is not None:
+                if osim > 0.6:
+                    onto_dupes.append((hyps[i].id, hyps[j].id, osim))
+            else:
+                if cosine(embeds[i], embeds[j]) > 0.85:
+                    emb_dupes.append((hyps[i].id, hyps[j].id, 0.0))
+
+    if onto_dupes or emb_dupes:
+        print(f"[proximity] {len(onto_dupes)} near-duplicate pairs by shared "
+              f"ontology entities; {len(emb_dupes)} more by text-embedding "
+              f"fallback (unresolved pairs)")
     return {}
 
 

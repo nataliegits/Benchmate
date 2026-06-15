@@ -347,6 +347,47 @@ def ontology_addendum_for_pair(a, b) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Similarity (for the Proximity agent) + query expansion (for literature)
+# ---------------------------------------------------------------------------
+
+def ontology_entities(text: str) -> set[str]:
+    """The set of canonical ontology CURIEs the text resolves to (possibly empty)."""
+    return {h["curie"] for h in ground_text(text)}
+
+
+def ontology_similarity(text_a: str, text_b: str) -> float | None:
+    """Jaccard overlap of the two texts' resolved ontology entities.
+
+    Two hypotheses that name the *same* genes/pathways/diseases score high even
+    if their wording differs — a far better dedup signal than text embeddings.
+    Returns None when either side resolves to nothing (so the caller can fall
+    back to its embedding similarity), and never raises.
+    """
+    ea, eb = ontology_entities(text_a), ontology_entities(text_b)
+    if not ea or not eb:
+        return None
+    inter = len(ea & eb)
+    union = len(ea | eb)
+    return inter / union if union else None
+
+
+def ontology_query_terms(text: str, max_terms: int = 4) -> list[str]:
+    """Canonical labels (+ any synonyms) for the entities in `text`, for use as
+    extra literature-search queries. Empty list if nothing resolves."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for hit in ground_text(text):
+        for cand in [hit["label"], *hit["synonyms"]]:
+            # strip a trailing species parenthetical from PR labels
+            cand = re.sub(r"\s*\([^)]+\)\s*$", "", cand).strip()
+            key = cand.lower()
+            if cand and key not in seen:
+                seen.add(key)
+                out.append(cand)
+    return out[:max_terms]
+
+
+# ---------------------------------------------------------------------------
 # Manual smoke test: python -m co_scientist.ontology
 # ---------------------------------------------------------------------------
 
