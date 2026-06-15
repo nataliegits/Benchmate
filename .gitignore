@@ -28,3 +28,10 @@ check_geneformer.py
 # Local-only user data
 data/geneformer/*.csv
 *.pdf
+
+# Internal-only docs / decks / images (keep off GitHub)
+*.docx
+*.pptx
+*.jpg
+*.jpeg
+*.png
