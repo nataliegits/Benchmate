@@ -105,3 +105,37 @@ waits 30 min, gets hypotheses — the architecture is:
 Cost: ~$1–3 per perturbation in Modal credits (A10G or A100, depending on
 gene count). Skip until there are real users willing to pay or your own
 budget allows.
+
+## Hosted Benchmark tab (read-only, precomputed)
+
+The **Benchmark** tab is a special case: its live buttons spend API money and
+the ontology comparison needs a running OntoMCP server — neither of which you
+want exposed on a public link. So the tab supports a **hosted, read-only mode**
+that shows results you captured locally instead of re-running them.
+
+Set one secret on the hosted app:
+
+```toml
+BENCHMATE_HOSTED = "1"
+```
+
+With that flag on, the Benchmark tab:
+
+- hides/disables every live (paid) button, so no visitor can spend your budget;
+- drops the OntoMCP setup instructions (no server needed in the cloud);
+- shows the most recent saved run for each section from `benchmark/results/`.
+
+**Workflow:**
+
+1. **Capture locally.** With OntoMCP running and `ANTHROPIC_API_KEY` set, open
+   the Benchmark tab and run each section (judge accuracy, validate, fair-vs-
+   naive, ontology grounding). Every run auto-saves to `benchmark/results/*.json`.
+   You can also capture from the CLI: `python -m benchmark.run_benchmark compare
+   --ontology`.
+2. **Commit** the JSON: `git add benchmark/results/*.json && git commit && git push`.
+3. **Deploy** as above, adding `BENCHMATE_HOSTED = "1"` to the app's Secrets.
+   Do **not** add `ANTHROPIC_API_KEY` — hosted mode never needs it, which is the
+   guarantee that the public link can't run up a bill.
+
+To refresh the numbers later: re-run locally, commit the updated JSON, push.
+Streamlit Cloud redeploys on push, so the demo picks them up automatically.

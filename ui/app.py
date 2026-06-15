@@ -642,15 +642,52 @@ with tab5:
 
     st.divider()
     st.markdown("### Live benchmarks (real API calls)")
-    st.caption(
-        "These run on the ERAD gold set in `benchmark/gold_set.py` and need "
-        "your Anthropic key (set in the sidebar). Ranking calls use Haiku, "
-        "so the spend is small — the estimates below are upper bounds."
-    )
 
+    from benchmark import results as bench_results
+    IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
+
+    def _show_saved(name: str) -> None:
+        """Render the latest saved run for a benchmark (params + metric tiles).
+        On the hosted demo this is the only thing shown for a section."""
+        run = bench_results.latest(name)
+        if not run:
+            if IS_HOSTED:
+                st.caption("No saved run yet — run this locally to populate the "
+                           "hosted demo.")
+            return
+        p = run.get("params", {})
+        bits = ", ".join(f"{k}={v}" for k, v in p.items())
+        st.caption(f"📊 Saved local run{(' · ' + bits) if bits else ''} · "
+                   f"captured {run.get('captured', '?')}")
+        metrics = run.get("metrics", {})
+        if metrics:
+            cols = st.columns(len(metrics))
+            for col, (k, v) in zip(cols, metrics.items()):
+                col.metric(k, v)
+        if run.get("note"):
+            st.caption(run["note"])
+
+    if IS_HOSTED:
+        st.info(
+            "**Hosted demo.** Each section shows results captured on a local "
+            "run (saved in the repo). Want to run them live yourself? Enter "
+            "**your own** Anthropic key in the sidebar — you pay only for your "
+            "own calls — and the key-only benchmarks below unlock. The ontology "
+            "comparison additionally needs a local OntoMCP server (see its "
+            "section), so it can't run on the hosted site."
+        )
+    else:
+        st.caption(
+            "These run on the ERAD gold set in `benchmark/gold_set.py` and need "
+            "an Anthropic key (set in the sidebar). Ranking calls use Haiku, "
+            "so the spend is small — the estimates below are upper bounds. "
+            "Each run is saved to `benchmark/results/`, which is what the "
+            "hosted demo displays."
+        )
     if not os.environ.get("ANTHROPIC_API_KEY"):
         st.warning(
-            "Set your Anthropic key in the sidebar to enable the buttons below."
+            "Add an Anthropic key in the sidebar to run any of these live. "
+            "Without one, the saved results above each section are still shown."
         )
 
     # ---- 1. Judge accuracy ------------------------------------------------
@@ -661,6 +698,7 @@ with tab5:
             "(how often the verdict flips when you swap A/B), self-consistency, "
             "and transitivity violations."
         )
+        _show_saved("judge_eval")
         je_pairs = st.slider("Cross-tier pairs to test", 4, 12, 8,
                              key="je_pairs",
                              help="More pairs = tighter estimates but more spend.")
@@ -685,6 +723,14 @@ with tab5:
                   if r.transitivity_triples else "n/a")
             c4.metric("transitivity", tv,
                       help="Want ~0 cycles (A>B>C>A).")
+            bench_results.save_run("judge_eval", {
+                "label": "Judge accuracy",
+                "params": {"pairs": int(je_pairs)},
+                "metrics": {"accuracy": f"{r.accuracy:.0%}",
+                            "position bias": f"{r.position_bias_rate:.0%}",
+                            "self-consistency": f"{r.self_consistency:.0%}",
+                            "transitivity": tv},
+            })
             if r.accuracy < 0.8 or r.position_bias_rate > 0.15:
                 st.info(
                     "The judge is the bottleneck. The fair judge (default) "
@@ -700,6 +746,7 @@ with tab5:
             "and score the leaderboard against the known tier order. Use "
             "as a regression test after any prompt or model change."
         )
+        _show_saved("validate")
         col_a, col_b = st.columns(2)
         with col_a:
             va_cycles = st.slider("Cycles", 2, 10, 6, key="va_cycles")
@@ -740,6 +787,13 @@ with tab5:
             c2.metric("top-1 correct", "yes" if top1 else "no",
                       help="Did a tier-A hypothesis finish #1?")
             c3.metric("top-3 overlap", f"{top3:.0%}")
+            bench_results.save_run("validate", {
+                "label": "Validate vs gold",
+                "params": {"cycles": int(va_cycles), "matches/cycle": int(va_npc)},
+                "metrics": {"spearman vs gold": f"{rho:+.2f}",
+                            "top-1 correct": "yes" if top1 else "no",
+                            "top-3 overlap": f"{top3:.0%}"},
+            })
 
             import pandas as pd
             rows = []
@@ -762,6 +816,7 @@ with tab5:
             "under both judges. Δ Spearman tells you whether the "
             "order-swap is actually buying accuracy."
         )
+        _show_saved("compare_fair_naive")
         col_a, col_b = st.columns(2)
         with col_a:
             cm_cycles = st.slider("Cycles", 2, 10, 6, key="cm_cycles")
@@ -803,6 +858,13 @@ with tab5:
             c2.metric("fair judge — spearman", f"{rho_fair:+.2f}")
             c3.metric("Δ (fair − naive)", f"{rho_fair - rho_naive:+.2f}",
                       delta=f"{rho_fair - rho_naive:+.2f}")
+            bench_results.save_run("compare_fair_naive", {
+                "label": "Fair vs naive judge",
+                "params": {"cycles": int(cm_cycles), "matches/cycle": int(cm_npc)},
+                "metrics": {"naive — spearman": f"{rho_naive:+.2f}",
+                            "fair — spearman": f"{rho_fair:+.2f}",
+                            "Δ (fair − naive)": f"{rho_fair - rho_naive:+.2f}"},
+            })
             if rho_fair > rho_naive:
                 st.success("Fair judge ranks closer to the gold tier order.")
             elif rho_fair < rho_naive:
@@ -814,8 +876,6 @@ with tab5:
 
     # ---- 4. Ontology grounding (structured-knowledge layer) --------------
     with st.container(border=True):
-        from co_scientist.ontology import ontomcp_available, ONTOMCP_API_URL
-        onto_up = ontomcp_available()
         st.markdown(
             "**4. Ontology grounding** — the fair judge ranks the same gold "
             "set with vs without a canonical 'known-biology' block "
@@ -824,15 +884,21 @@ with tab5:
             "injected into the prompt. Δ Spearman tells you whether grounding "
             "in structured knowledge actually beats reading the text alone."
         )
+        _show_saved("compare_ontology")
+
+        from co_scientist.ontology import ontomcp_available, ONTOMCP_API_URL
+        onto_up = ontomcp_available()
         if onto_up:
             st.caption(f"✓ OntoMCP reachable at {ONTOMCP_API_URL}")
         else:
             st.info(
-                f"OntoMCP not reachable at {ONTOMCP_API_URL}. Start it, then "
-                "reload:\n\n"
+                "This comparison needs a local **OntoMCP** server, which isn't "
+                "part of the hosted demo. To run it yourself: clone and start "
+                "OntoMCP in a separate terminal, add your Anthropic key in the "
+                "sidebar, then reload.\n\n"
                 "```\ngit clone https://github.com/jeanlouishoneine-tech/"
                 "OntoMCP.git && cd OntoMCP\nuv sync && uv run ontomcp-api\n```\n"
-                "Set `ONTOMCP_API_URL` if it isn't on http://localhost:8000."
+                f"(Set `ONTOMCP_API_URL` if it isn't on {ONTOMCP_API_URL}.)"
             )
         col_a, col_b = st.columns(2)
         with col_a:
@@ -840,11 +906,12 @@ with tab5:
         with col_b:
             on_npc = st.slider("Matches per cycle", 4, 12, 8, key="on_npc")
         on_calls = on_cycles * on_npc * 4        # fair judge twice, both arms
-        st.caption(f"~{on_calls} judge calls (fair judge twice per match, both "
-                   f"arms). Estimated spend: ~${0.001 * on_calls:.2f}. "
+        st.caption(f"~{on_calls} judge calls (fair judge twice per match, "
+                   f"both arms). Estimated spend: ~${0.001 * on_calls:.2f}. "
                    "OntoMCP lookups are local and free.")
         if st.button("Run ontology compare", type="primary",
-                     disabled=not (os.environ.get("ANTHROPIC_API_KEY") and onto_up),
+                     disabled=not (os.environ.get("ANTHROPIC_API_KEY")
+                                   and onto_up),
                      key="on_btn"):
             from benchmark.run_benchmark import run_tournament, _fair_judge_fn
             from benchmark.gold_set import gold_hypotheses
@@ -871,12 +938,21 @@ with tab5:
             c2.metric("grounding ON — spearman", f"{rho_onto:+.2f}")
             c3.metric("Δ (ON − OFF)", f"{rho_onto - rho_base:+.2f}",
                       delta=f"{rho_onto - rho_base:+.2f}")
+            bench_results.save_run("compare_ontology", {
+                "label": "Ontology grounding (fair judge, OFF vs ON)",
+                "params": {"cycles": int(on_cycles),
+                           "matches/cycle": int(on_npc)},
+                "metrics": {"grounding OFF — spearman": f"{rho_base:+.2f}",
+                            "grounding ON — spearman": f"{rho_onto:+.2f}",
+                            "Δ (ON − OFF)": f"{rho_onto - rho_base:+.2f}"},
+            })
             if rho_onto > rho_base:
-                st.success("Ontology grounding ranks closer to the gold tier order.")
+                st.success("Ontology grounding ranks closer to the gold "
+                           "tier order.")
             elif rho_onto < rho_base:
                 st.warning(
-                    "Grounding underperformed in this run. One comparison is "
-                    "one noisy sample — trust the median of 3+ runs."
+                    "Grounding underperformed in this run. One comparison "
+                    "is one noisy sample — trust the median of 3+ runs."
                 )
             else:
                 st.info("No difference this run. Re-run a few times before "

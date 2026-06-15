@@ -36,6 +36,7 @@ python -m benchmark.run_benchmark compare --ontology
 | `judge_eval.py` | Live judge diagnostics on the gold set |
 | `gold_set.py` | Tiered gold-standard hypotheses for validation — **edit for your domain** |
 | `run_benchmark.py` | CLI tying it together. `compare --ontology` toggles the OntoMCP grounding layer |
+| `results.py` | Saves each run to `results/*.json` so the hosted app can display numbers it didn't compute |
 
 The `--ontology` flag injects canonical ontology terms (via OntoMCP) into the
 fair judge's prompt — the structured-knowledge layer in `co_scientist/ontology.py`.
@@ -43,6 +44,36 @@ Start the server first: `git clone https://github.com/jeanlouishoneine-tech/Onto
 && cd OntoMCP && make install && make serve-api`, then set `ONTOMCP_API_URL` if it
 isn't on `http://localhost:8000`. Grounding is fail-soft: with the server off, the
 flag exits with setup instructions and the other commands are unaffected.
+
+## Running the benchmarks yourself (anyone, with your own key)
+
+You don't have to use the CLI — the **Benchmark tab** in the Streamlit app runs
+all of these with sliders and buttons, and saves each run so it shows up later
+(and on the hosted demo).
+
+**In the hosted app:**
+
+1. Open the app and put **your own** Anthropic key in the sidebar. You pay only
+   for your own calls; the maintainer's key is never used.
+2. Go to the **Benchmark** tab. The free **simulator** runs with no key. The
+   **judge accuracy**, **validate**, and **fair-vs-naive** buttons unlock once
+   your key is set.
+3. Each section shows the maintainer's last saved result by default; click the
+   button to run your own on top of it.
+
+**The ontology comparison is the exception.** It needs a local OntoMCP server,
+which isn't part of the hosted site. To run that one yourself:
+
+```bash
+git clone https://github.com/jeanlouishoneine-tech/OntoMCP.git && cd OntoMCP
+uv sync && uv run ontomcp-api          # leave running; serves http://localhost:8000
+
+# in another terminal, with the Benchmate app running locally + your key set:
+#   the "Run ontology compare" button turns on once OntoMCP is reachable
+```
+
+Prefer the terminal? Every button has a CLI twin: `python -m benchmark.run_benchmark
+<simulate|judge-eval|validate|compare|compare --ontology>` (see Commands above).
 
 ## The one change to try first
 
