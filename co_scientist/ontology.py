@@ -52,8 +52,13 @@ DEFAULT_ONTOLOGIES = ["GO", "MONDO", "PR", "CHEBI", "NCIT", "CL"]
 
 # Keep grounding compact so it doesn't dominate the judge prompt.
 MAX_TERMS_PER_TEXT = 8
-MIN_SCORE = 0.0          # OntoMCP/OLS scores vary; 0.0 = keep the top hit as-is
 DEF_CHARS = 160
+
+# How many candidates to ask OntoMCP for. OntoMCP's `score` is positional, so a
+# canonical base term can sit a few rows down; ask for enough that it isn't
+# truncated before our reranker sees it. Sent as `limit`; if the server rejects
+# the field, resolve_term retries without it (so this can never break grounding).
+SEARCH_LIMIT = int(os.environ.get("ONTOMCP_SEARCH_LIMIT", "25"))
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +114,9 @@ def candidate_terms(text: str) -> list[str]:
             add(phrase)
 
     for m in _SYMBOL_RE.findall(text):
+        # Drop a trailing lowercase-word suffix: EDEM1-dependent -> EDEM1,
+        # HRD1-mediated -> HRD1. Keep symbol-like tails (OS-9, XTP3-B).
+        m = re.sub(r"-[a-z]+$", "", m)
         if m in _STOPWORDS or len(m) < 2:
             continue
         # require at least one digit or 2+ caps -> looks like a gene/protein symbol
@@ -235,10 +243,14 @@ def resolve_term(term: str, ontologies: tuple[str, ...] = tuple(DEFAULT_ONTOLOGI
 
     Cached, and fail-soft: any network/parse error returns None.
     """
-    body = {"query": term, "ontologies": list(ontologies)}
+    url = f"{ONTOMCP_API_URL.rstrip('/')}/search"
+    base_body = {"query": term, "ontologies": list(ontologies)}
     try:
         with httpx.Client(timeout=ONTOMCP_TIMEOUT) as client:
-            r = client.post(f"{ONTOMCP_API_URL.rstrip('/')}/search", json=body)
+            # Ask for more candidates so the canonical base term isn't truncated.
+            r = client.post(url, json={**base_body, "limit": SEARCH_LIMIT})
+            if r.status_code == 422:                 # server rejects `limit`
+                r = client.post(url, json=base_body)  # retry without it
             r.raise_for_status()
             hits = [n for n in (_norm_hit(h) for h in _iter_hits(r.json())) if n]
     except Exception:

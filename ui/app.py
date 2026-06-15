@@ -812,6 +812,76 @@ with tab5:
                     "Trust the median of 3+ runs."
                 )
 
+    # ---- 4. Ontology grounding (structured-knowledge layer) --------------
+    with st.container(border=True):
+        from co_scientist.ontology import ontomcp_available, ONTOMCP_API_URL
+        onto_up = ontomcp_available()
+        st.markdown(
+            "**4. Ontology grounding** — the fair judge ranks the same gold "
+            "set with vs without a canonical 'known-biology' block "
+            "(genes / diseases / pathways resolved via "
+            "[OntoMCP](https://github.com/jeanlouishoneine-tech/OntoMCP)) "
+            "injected into the prompt. Δ Spearman tells you whether grounding "
+            "in structured knowledge actually beats reading the text alone."
+        )
+        if onto_up:
+            st.caption(f"✓ OntoMCP reachable at {ONTOMCP_API_URL}")
+        else:
+            st.info(
+                f"OntoMCP not reachable at {ONTOMCP_API_URL}. Start it, then "
+                "reload:\n\n"
+                "```\ngit clone https://github.com/jeanlouishoneine-tech/"
+                "OntoMCP.git && cd OntoMCP\nuv sync && uv run ontomcp-api\n```\n"
+                "Set `ONTOMCP_API_URL` if it isn't on http://localhost:8000."
+            )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            on_cycles = st.slider("Cycles", 2, 10, 6, key="on_cycles")
+        with col_b:
+            on_npc = st.slider("Matches per cycle", 4, 12, 8, key="on_npc")
+        on_calls = on_cycles * on_npc * 4        # fair judge twice, both arms
+        st.caption(f"~{on_calls} judge calls (fair judge twice per match, both "
+                   f"arms). Estimated spend: ~${0.001 * on_calls:.2f}. "
+                   "OntoMCP lookups are local and free.")
+        if st.button("Run ontology compare", type="primary",
+                     disabled=not (os.environ.get("ANTHROPIC_API_KEY") and onto_up),
+                     key="on_btn"):
+            from benchmark.run_benchmark import run_tournament, _fair_judge_fn
+            from benchmark.gold_set import gold_hypotheses
+            from benchmark.metrics import spearman
+
+            def score(hyps):
+                gold_rank_of = {h.id: i for i, h in enumerate(hyps)}
+                return spearman([-gold_rank_of[h.id] for h in hyps],
+                                [h.elo for h in hyps])
+
+            with st.spinner("Running fair judge, grounding OFF…"):
+                h1 = gold_hypotheses()
+                run_tournament(h1, _fair_judge_fn(ontology=False),
+                                cycles=int(on_cycles), n_per_cycle=int(on_npc))
+                rho_base = score(h1)
+            with st.spinner("Running fair judge, grounding ON…"):
+                h2 = gold_hypotheses()
+                run_tournament(h2, _fair_judge_fn(ontology=True),
+                                cycles=int(on_cycles), n_per_cycle=int(on_npc))
+                rho_onto = score(h2)
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("grounding OFF — spearman", f"{rho_base:+.2f}")
+            c2.metric("grounding ON — spearman", f"{rho_onto:+.2f}")
+            c3.metric("Δ (ON − OFF)", f"{rho_onto - rho_base:+.2f}",
+                      delta=f"{rho_onto - rho_base:+.2f}")
+            if rho_onto > rho_base:
+                st.success("Ontology grounding ranks closer to the gold tier order.")
+            elif rho_onto < rho_base:
+                st.warning(
+                    "Grounding underperformed in this run. One comparison is "
+                    "one noisy sample — trust the median of 3+ runs."
+                )
+            else:
+                st.info("No difference this run. Re-run a few times before "
+                        "concluding.")
+
     st.divider()
     st.caption(
         "Full plan and recommended sequence of work: "
