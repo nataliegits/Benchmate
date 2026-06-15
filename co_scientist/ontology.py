@@ -123,12 +123,15 @@ def candidate_terms(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _iter_hits(payload) -> list[dict]:
-    """Find the list of result dicts in an OntoMCP /search response, tolerating
-    several plausible envelope shapes."""
+    """Find the list of result dicts in an OntoMCP /search response.
+
+    The confirmed OntoMCP shape is {"data": [...]}; the other keys are kept as
+    defensive fallbacks in case the API changes.
+    """
     if isinstance(payload, list):
         return [h for h in payload if isinstance(h, dict)]
     if isinstance(payload, dict):
-        for key in ("results", "matches", "terms", "hits", "data", "items"):
+        for key in ("data", "results", "matches", "terms", "hits", "items"):
             v = payload.get(key)
             if isinstance(v, list):
                 return [h for h in v if isinstance(h, dict)]
@@ -147,7 +150,7 @@ def _first(d: dict, *keys, default=None):
 
 def _norm_hit(h: dict) -> dict | None:
     """Normalise one OntoMCP/OLS result to {curie, label, definition, synonyms,
-    ontology, score}. Returns None if it has no usable identifier."""
+    ontology, score, obsolete}. Returns None if it has no usable identifier."""
     curie = _first(h, "curie", "obo_id", "id", "short_form")
     if not curie:
         return None
@@ -165,7 +168,64 @@ def _norm_hit(h: dict) -> dict | None:
         "ontology": _first(h, "ontology", "ontology_name", "ontology_prefix",
                            default=""),
         "score": float(_first(h, "score", "relevance", default=0.0) or 0.0),
+        "obsolete": bool(_first(h, "is_obsolete", "obsolete", default=False)),
     }
+
+
+# Label prefixes that mark an over-specific sub-process, not the base concept.
+_QUALIFIER_PREFIXES = ("positive regulation of ", "negative regulation of ",
+                       "regulation of ", "abnormal ", "increased ", "decreased ")
+
+# Words that mark a clinical variant/stage rather than the base disease/process.
+_VARIANT_WORDS = {"stage", "grade", "smoldering", "smouldering", "relapse",
+                  "relapsed", "recurrent", "refractory", "iss", "ds"}
+
+
+def _species(hit: dict) -> str | None:
+    """For Protein Ontology (PR) terms, the species is in a trailing
+    parenthetical, e.g. '... HRD1 (fruit fly)'. Returns it lowercased, or None
+    for organism-agnostic terms (no parenthetical) and non-PR ontologies."""
+    if (hit.get("ontology") or "").upper() != "PR":
+        return None
+    m = re.search(r"\(([^)]+)\)\s*$", hit["label"])
+    return m.group(1).strip().lower() if m else None
+
+
+def _is_human(species: str | None) -> bool:
+    return bool(species and ("human" in species or "homo sapiens" in species))
+
+
+def _hit_quality(hit: dict, query: str) -> float:
+    """Rank candidates so the canonical, on-target term wins.
+
+    OntoMCP's `score` is just positional rank (1.0, 0.889, ... counting down),
+    NOT a relevance score — so we rank primarily on the label and use the server
+    score only as a faint tiebreaker. An exact base-label match dominates;
+    variant/stage/'regulation of' terms are penalised hard.
+    """
+    q = query.strip().lower()
+    label = hit["label"].lower()
+    # strip a trailing species parenthetical before comparing labels
+    base = re.sub(r"\s*\([^)]+\)\s*$", "", label).strip()
+    s = 0.0
+
+    if base == q:
+        s += 10.0                                  # exact match to the base label
+    elif q in base or base in q:
+        s += 1.0                                   # query is a sub/superstring
+
+    if any(label.startswith(p) for p in _QUALIFIER_PREFIXES):
+        s -= 3.0                                   # "regulation of ..." sub-process
+    if any(w in label.split() for w in _VARIANT_WORDS):
+        s -= 2.0                                   # clinical stage / variant
+
+    sp = _species(hit)
+    if sp:
+        s += 2.0 if _is_human(sp) else -5.0        # human up, other species down
+
+    s += 0.1 * hit.get("score", 0.0)               # faint tiebreak on server order
+    s -= 0.01 * len(label.split())                 # mild preference for concise labels
+    return s
 
 
 @lru_cache(maxsize=2048)
@@ -183,11 +243,22 @@ def resolve_term(term: str, ontologies: tuple[str, ...] = tuple(DEFAULT_ONTOLOGI
             hits = [n for n in (_norm_hit(h) for h in _iter_hits(r.json())) if n]
     except Exception:
         return None
+
+    hits = [h for h in hits if not h["obsolete"]]
     if not hits:
         return None
-    hits.sort(key=lambda x: -x["score"])
-    best = hits[0]
-    return best if best["score"] >= MIN_SCORE else best  # keep top hit regardless
+
+    best = max(hits, key=lambda h: _hit_quality(h, term))
+    # Don't inject a species-specific protein fact for a different organism —
+    # a wrong fact is worse than no fact (e.g. "HRD1" -> fruit-fly protein).
+    sp = _species(best)
+    if sp and not _is_human(sp):
+        return None
+    # If the only matches are penalised variants/sub-processes (negative
+    # quality), drop the term rather than ground it on a misleading near-miss.
+    if _hit_quality(best, term) < 0:
+        return None
+    return best
 
 
 def ontomcp_available() -> bool:

@@ -163,9 +163,14 @@ def main():
     args = ap.parse_args()
 
     hyps = build_hypotheses()
-    print("SIX HYPOTHESES (all start at 1200):")
+    print("=" * 72)
+    print("SIX HYPOTHESES (all start at 1200)")
+    print("=" * 72)
     for h in hyps:
-        print(f"  {lbl(h)} · tier {tier(h)} · {h.statement[:70]}...")
+        print(f"\n{lbl(h)} · tier {tier(h)}")
+        print(f"  Statement:  {h.statement}")
+        print(f"  Rationale:  {h.rationale}")
+        print(f"  Experiment: {h.experiment}")
 
     stage_reflection(hyps, args.live)
     total = stage_ranking(hyps, args.rounds, args.n_per_cycle, args.skill, args.seed, args.live)
