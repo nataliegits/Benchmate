@@ -20,6 +20,10 @@ python -m benchmark.run_benchmark validate --cycles 6 --n-per-cycle 8
 
 # LIVE — same gold set, fair judge vs the current naive judge, side by side.
 python -m benchmark.run_benchmark compare
+
+# LIVE — same gold set, fair judge with ontology grounding OFF vs ON.
+# Prints Δ spearman (ontology − baseline). Needs OntoMCP running (see below).
+python -m benchmark.run_benchmark compare --ontology
 ```
 
 ## Files
@@ -31,7 +35,14 @@ python -m benchmark.run_benchmark compare
 | `fair_judge.py` | Order-swapped, bias-aware pairwise judge. `ranking_fair` is a drop-in for `agents.ranking` |
 | `judge_eval.py` | Live judge diagnostics on the gold set |
 | `gold_set.py` | Tiered gold-standard hypotheses for validation — **edit for your domain** |
-| `run_benchmark.py` | CLI tying it together |
+| `run_benchmark.py` | CLI tying it together. `compare --ontology` toggles the OntoMCP grounding layer |
+
+The `--ontology` flag injects canonical ontology terms (via OntoMCP) into the
+fair judge's prompt — the structured-knowledge layer in `co_scientist/ontology.py`.
+Start the server first: `git clone https://github.com/jeanlouishoneine-tech/OntoMCP
+&& cd OntoMCP && make install && make serve-api`, then set `ONTOMCP_API_URL` if it
+isn't on `http://localhost:8000`. Grounding is fail-soft: with the server off, the
+flag exits with setup instructions and the other commands are unaffected.
 
 ## The one change to try first
 

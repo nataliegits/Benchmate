@@ -26,7 +26,9 @@ Benchmate/
 │   ├── llm_config.py       # per-role model assignments
 │   ├── agents.py           # the 7 agents (Generation reads Geneformer cache,
 │   │                       # Reflection fact-checks against it)
-│   └── graph.py            # LangGraph wiring of the supervisor loop
+│   ├── graph.py            # LangGraph wiring of the supervisor loop
+│   └── ontology.py         # OntoMCP grounding: canonical ontology terms
+│                           # injected into the judge prompt as background facts
 ├── benchmark/              # Is the Elo leaderboard trustworthy? (see below)
 │   ├── simulate.py         # free Monte Carlo over the real elo.py
 │   ├── metrics.py          # Spearman, top-k, churn, transitivity
@@ -102,6 +104,55 @@ To populate the cache:
 
 See `data/geneformer/README.md` for the expected CSV schema.
 
+## Ontology grounding for the judge
+
+`co_scientist/ontology.py` is the **structured-knowledge layer** — the same
+evidence-injection pattern as Geneformer, but for the Ranking judge instead of
+Generation. Before the fair judge compares two hypotheses, it resolves the
+biological entities each one mentions (genes, proteins, complexes, diseases,
+small molecules, cell types) to canonical ontology terms and appends them to
+the judge prompt as a *"known-biology grounding"* block.
+
+It talks to [**OntoMCP**](https://github.com/jeanlouishoneine-tech/OntoMCP), a
+small MCP server + HTTP API over EBI's OLS4 that returns real CURIEs with no
+hallucinated IDs. Three properties matter:
+
+- **Background, not veto.** The injected text tells the judge these are
+  background facts and that *absence of a term is not evidence against a
+  hypothesis* — the "don't hard-veto novel biology" caveat, baked in.
+- **Fail-soft everywhere.** Server down, slow, or returning an unexpected JSON
+  shape → empty grounding, never a crash. A tournament runs fine with OntoMCP
+  off; grounding is a pure enhancement.
+- **Defensive parser.** `_iter_hits` / `_norm_hit` accept several plausible
+  OLS/OntoMCP response shapes and extract CURIEs, labels, and synonyms (e.g.
+  `HRD1 → aka SYVN1`), shrugging off shapes they don't recognise.
+
+Start OntoMCP, then point Benchmate at it:
+
+```bash
+git clone https://github.com/jeanlouishoneine-tech/OntoMCP && cd OntoMCP
+make install && make serve-api          # -> http://localhost:8000
+export ONTOMCP_API_URL=http://localhost:8000   # default already matches
+```
+
+Smoke-test the grounding (and see what resolves):
+
+```bash
+python -m co_scientist.ontology
+```
+
+To measure whether grounding actually helps the ranking, `compare --ontology`
+runs the fair judge over the gold set with grounding **OFF vs ON** and prints
+the Δ spearman (ontology − baseline). If OntoMCP isn't running it exits with
+copy-paste setup instructions rather than erroring mid-run:
+
+```bash
+python -m benchmark.run_benchmark compare --ontology
+```
+
+(One run is a single noisy sample — run it ≥3× each way and compare ranges
+before calling the layer a win.)
+
 ## Benchmarking the Elo tournament
 
 Benchmarks are built in. Benchmate ships its own toolkit for the question
@@ -119,6 +170,7 @@ points are available **two ways**, no separate install:
   python -m benchmark.run_benchmark judge-eval   # LIVE — is the real LLM judge any good?
   python -m benchmark.run_benchmark validate     # LIVE — rank the gold set, score vs tier order
   python -m benchmark.run_benchmark compare      # LIVE — fair vs naive judge, side by side
+  python -m benchmark.run_benchmark compare --ontology  # LIVE — fair judge OFF vs ON ontology grounding
   ```
 
 The gold set in `benchmark/gold_set.py` is ERAD / bortezomib-resistant

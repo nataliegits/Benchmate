@@ -4,6 +4,7 @@
   python -m benchmark.run_benchmark judge-eval          # live: is the judge good?
   python -m benchmark.run_benchmark validate            # live: does ranking match gold?
   python -m benchmark.run_benchmark compare             # live: fair judge vs naive judge
+  python -m benchmark.run_benchmark compare --ontology  # live: fair judge OFF vs ON OntoMCP grounding
 
 Only `simulate` is free. The others make real API calls on the small gold set
 in gold_set.py; keep --matches modest while iterating.
@@ -72,9 +73,27 @@ def _report_vs_gold(hyps: list[Hypothesis], label: str) -> float:
 
 # ----- judges --------------------------------------------------------------
 
-def _fair_judge_fn():
+def _fair_judge_fn(ontology: bool = False):
+    """Fair (order-swapped) judge. With ontology=True, inject a canonical
+    'known-biology' grounding block (from OntoMCP) into the judge prompt for
+    each pair — the structured-knowledge layer."""
     from .fair_judge import judge_pair
-    return lambda a, b: judge_pair(a, b, CRITERIA, role="ranking").winner
+    if not ontology:
+        return lambda a, b: judge_pair(a, b, CRITERIA, role="ranking").winner
+
+    from co_scientist.ontology import ontology_addendum_for_pair, ontomcp_available
+    if not ontomcp_available():
+        from co_scientist.ontology import ONTOMCP_API_URL
+        raise SystemExit(
+            f"--ontology needs OntoMCP running. No server at {ONTOMCP_API_URL}.\n"
+            "Start it:  git clone https://github.com/jeanlouishoneine-tech/OntoMCP "
+            "&& cd OntoMCP && make install && make serve-api\n"
+            "Then set ONTOMCP_API_URL if it isn't on http://localhost:8000.")
+
+    def judge(a, b):
+        add = ontology_addendum_for_pair(a, b)
+        return judge_pair(a, b, CRITERIA, addendum=add, role="ranking").winner
+    return judge
 
 
 def _naive_judge_fn():
@@ -111,6 +130,22 @@ def cmd_validate(args):
 
 def cmd_compare(args):
     _require_key()
+    if args.ontology:
+        # Isolate the ontology layer: fair judge with vs without grounding.
+        print("Ranking the same gold set with the fair judge, ontology grounding "
+              f"OFF vs ON ({args.cycles}×{args.n_per_cycle} matches each):")
+        h1 = gold_hypotheses()
+        run_tournament(h1, _fair_judge_fn(ontology=False), args.cycles, args.n_per_cycle)
+        rho_base = _report_vs_gold(h1, "FAIR judge, ontology OFF")
+        h2 = gold_hypotheses()
+        run_tournament(h2, _fair_judge_fn(ontology=True), args.cycles, args.n_per_cycle)
+        rho_onto = _report_vs_gold(h2, "FAIR judge, ontology ON (OntoMCP grounding)")
+        print(f"\n  Δ spearman (ontology − baseline) = {rho_onto - rho_base:+.2f}  "
+              f"{'(grounding ranks closer to gold)' if rho_onto > rho_base else ''}")
+        print("  Note: one run is a single noisy sample. Run ≥3× each and compare "
+              "ranges before calling the ontology layer a win — see BENCHMARKING_PLAN.md.")
+        return
+
     print("Ranking the same gold set under two judges "
           f"({args.cycles}×{args.n_per_cycle} matches each):")
     h1 = gold_hypotheses()
@@ -140,6 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
     cm = sub.add_parser("compare", help="live: fair judge vs naive judge on the gold set")
     cm.add_argument("--cycles", type=int, default=6)
     cm.add_argument("--n-per-cycle", type=int, default=8)
+    cm.add_argument("--ontology", action="store_true",
+                    help="compare fair judge OFF vs ON OntoMCP grounding "
+                         "(needs `make serve-api`; set ONTOMCP_API_URL)")
     return p
 
 
