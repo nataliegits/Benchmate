@@ -1,0 +1,32 @@
+name: Keep Streamlit app awake
+
+# Streamlit Community Cloud puts free apps to sleep after a stretch with no
+# visitors. This workflow loads the app on a schedule so it always has a
+# little traffic and stays awake — handy when you want a link that's instantly
+# live for someone (e.g. sharing the demo).
+#
+# SETUP (one of two ways):
+#   A) Easiest: set a repository variable named APP_URL to your app's URL.
+#      GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables
+#      -> New repository variable -> name APP_URL, value https://your-app.streamlit.app
+#   B) Or just replace the fallback URL on the APP_URL line below and commit.
+#
+# After it's set: check the "Actions" tab to confirm runs are succeeding.
+# Note: GitHub may delay scheduled runs under load, and it disables scheduled
+# workflows after 60 days of no repo activity (any push re-enables them).
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # roughly every 10 minutes
+  workflow_dispatch:          # adds a "Run workflow" button so you can test it now
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the app
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://YOUR-APP-NAME.streamlit.app' }}
+        run: |
+          echo "Pinging $APP_URL"
+          curl -sS -L --max-time 90 -o /dev/null -w "HTTP status: %{http_code}\n" "$APP_URL" || true
