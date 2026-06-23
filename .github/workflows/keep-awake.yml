@@ -1,32 +1,45 @@
 name: Keep Streamlit app awake
 
 # Streamlit Community Cloud puts free apps to sleep after a stretch with no
-# visitors. This workflow loads the app on a schedule so it always has a
-# little traffic and stays awake — handy when you want a link that's instantly
-# live for someone (e.g. sharing the demo).
+# real visitors. A plain curl can't keep it awake — a sleeping app redirects
+# into an auth/session flow and only wakes when a real browser runs its JS and
+# clicks the "get this app back up" button. So this workflow drives a headless
+# browser (see .github/scripts/wake_streamlit.py) to actually load the app,
+# wake it if needed, and register a genuine session.
 #
-# SETUP (one of two ways):
-#   A) Easiest: set a repository variable named APP_URL to your app's URL.
-#      GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables
-#      -> New repository variable -> name APP_URL, value https://your-app.streamlit.app
-#   B) Or just replace the fallback URL on the APP_URL line below and commit.
+# SETUP:
+#   Set a repository variable named APP_URL to your app's URL.
+#   GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables
+#   -> New repository variable -> name APP_URL, value https://your-app.streamlit.app
+#   (A fallback URL is used if APP_URL isn't set.)
 #
-# After it's set: check the "Actions" tab to confirm runs are succeeding.
-# Note: GitHub may delay scheduled runs under load, and it disables scheduled
+# NOTE: GitHub delays/batches scheduled runs on free runners — a "*/10" cron
+# realistically fires every couple of hours. It also disables scheduled
 # workflows after 60 days of no repo activity (any push re-enables them).
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # roughly every 10 minutes
+    - cron: "*/30 * * * *"   # every 30 min (GitHub may delay/batch these)
   workflow_dispatch:          # adds a "Run workflow" button so you can test it now
 
 jobs:
-  ping:
+  wake:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping the app
-        env:
-          APP_URL: ${{ vars.APP_URL || 'https://YOUR-APP-NAME.streamlit.app' }}
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright + Chromium
         run: |
-          echo "Pinging $APP_URL"
-          curl -sS -L --max-time 90 -o /dev/null -w "HTTP status: %{http_code}\n" "$APP_URL" || true
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Visit and wake the app
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://benchmate.streamlit.app/' }}
+        run: python .github/scripts/wake_streamlit.py
