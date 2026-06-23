@@ -24,6 +24,14 @@ python -m benchmark.run_benchmark compare
 # LIVE — same gold set, fair judge with ontology grounding OFF vs ON.
 # Prints Δ spearman (ontology − baseline). Needs OntoMCP running (see below).
 python -m benchmark.run_benchmark compare --ontology
+
+# LIVE — ontology DISCRIMINATION test on the adversarial set:
+# does grounding sink the fluent-but-FALSE traps WITHOUT punishing NOVEL ideas?
+python -m benchmark.run_adversarial --cycles 6 --n-per-cycle 8
+
+# Does the Elo ranking agree with an independent sequence model (AlphaGenome /
+# Enformer)? Build a scores file first (see elo_vs_variant_score.py), or:
+python -m benchmark.elo_vs_variant_score --demo
 ```
 
 ## Files
@@ -37,6 +45,9 @@ python -m benchmark.run_benchmark compare --ontology
 | `gold_set.py` | Tiered gold-standard hypotheses for validation — **edit for your domain** |
 | `run_benchmark.py` | CLI tying it together. `compare --ontology` toggles the OntoMCP grounding layer |
 | `results.py` | Saves each run to `results/*.json` so the hosted app can display numbers it didn't compute |
+| `gold_set_adversarial.py` | 3-kind set (solid / fluent-but-false / novel-but-true) for the discrimination test — **review the biology** |
+| `run_adversarial.py` | Ontology discrimination test: reports trap-demotion vs novelty-penalty |
+| `elo_vs_variant_score.py` | Correlates the Elo ranking with an independent AlphaGenome/Enformer score |
 
 The `--ontology` flag injects canonical ontology terms (via OntoMCP) into the
 fair judge's prompt — the structured-knowledge layer in `co_scientist/ontology.py`.
@@ -74,6 +85,30 @@ uv sync && uv run ontomcp-api          # leave running; serves http://localhost:
 
 Prefer the terminal? Every button has a CLI twin: `python -m benchmark.run_benchmark
 <simulate|judge-eval|validate|compare|compare --ontology>` (see Commands above).
+
+## Two newer experiments
+
+**Ontology discrimination (`run_adversarial.py`).** A plain "does grounding raise
+Spearman" test is too easy — and risks rewarding a judge that just filters for
+consensus, penalising novel hypotheses. So `gold_set_adversarial.py` has three
+kinds: *solid* (correct), *novel* (real but cutting-edge, may not resolve in the
+ontology), and *trap* (fluent but contradicts a canonical fact). The win
+condition is **trap_demotion > 0** (grounding sinks the false ones) **with
+novelty_penalty ≈ 0** (it leaves the novel ones alone). Needs OntoMCP + a key.
+
+**Elo vs. an independent predictor (`elo_vs_variant_score.py`).** For hypotheses
+you can frame as a regulatory variant, score them with a sequence-to-function
+model and correlate against the Elo ranking. Low correlation = Elo isn't enough
+for candidate selection on its own.
+
+Scoring backends live in `co_scientist/variant_scorer.py`:
+- **AlphaGenome** (recommended) — free API, no GPU. `pip install alphagenome`,
+  get a non-commercial key at <https://www.alphagenomedocs.com/>, then
+  `export ALPHAGENOME_API_KEY=...`.
+- **Enformer** — fully open, runs locally on a GPU (Colab), via `enformer-pytorch`.
+
+Both score *sequence/variant* claims, not perturbation claims ("inhibit p97"
+isn't a sequence change) — apply them to the subset that fits.
 
 ## The one change to try first
 
