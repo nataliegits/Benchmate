@@ -958,6 +958,94 @@ with tab5:
                 st.info("No difference this run. Re-run a few times before "
                         "concluding.")
 
+    # ---- 5. Ontology discrimination (traps vs novelty) -------------------
+    with st.container(border=True):
+        st.markdown(
+            "**5. Ontology discrimination** — the honest version of #4. Ranks an "
+            "adversarial set with three kinds of hypothesis (solid, fluent-but-"
+            "**false** traps, and **novel**-but-true) and asks: does grounding "
+            "sink the traps **without** punishing the novel ideas? "
+            "*Trap demotion* should be positive; *novelty penalty* should be ~0."
+        )
+        _show_saved("discrimination")
+        if not IS_HOSTED:
+            d_cols = st.columns(2)
+            with d_cols[0]:
+                ad_cycles = st.slider("Cycles", 2, 10, 6, key="ad_cycles")
+            with d_cols[1]:
+                ad_npc = st.slider("Matches per cycle", 4, 12, 8, key="ad_npc")
+            st.caption(f"~{ad_cycles * ad_npc * 4} judge calls (fair judge twice, "
+                       f"both arms). Needs OntoMCP running.")
+            if st.button("Run discrimination test", type="primary",
+                         disabled=not (os.environ.get("ANTHROPIC_API_KEY")
+                                       and onto_up),
+                         key="ad_btn"):
+                from benchmark.run_benchmark import run_tournament, _fair_judge_fn
+                from benchmark.gold_set_adversarial import adversarial_hypotheses
+                from benchmark.run_adversarial import summarize
+                with st.spinner("Ranking adversarial set, grounding OFF…"):
+                    off = adversarial_hypotheses()
+                    run_tournament(off, _fair_judge_fn(ontology=False),
+                                   int(ad_cycles), int(ad_npc))
+                with st.spinner("Ranking adversarial set, grounding ON…"):
+                    on = adversarial_hypotheses()
+                    run_tournament(on, _fair_judge_fn(ontology=True),
+                                   int(ad_cycles), int(ad_npc))
+                res = summarize(off, on)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("trap demotion", f"{res['trap_demotion']:+.1f}",
+                          help="Want > 0 — grounding sinks the false traps.")
+                c2.metric("novelty penalty", f"{res['novelty_penalty']:+.1f}",
+                          help="Want ~0 — grounding leaves novel ideas alone.")
+                c3.metric("spearman ON", f"{res['spearman_on']:+.2f}",
+                          delta=f"{res['spearman_on'] - res['spearman_off']:+.2f}")
+                bench_results.save_run("discrimination", {
+                    "label": "Ontology discrimination",
+                    "params": {"cycles": int(ad_cycles), "matches/cycle": int(ad_npc)},
+                    "metrics": {"trap demotion": f"{res['trap_demotion']:+.1f}",
+                                "novelty penalty": f"{res['novelty_penalty']:+.1f}",
+                                "spearman ON": f"{res['spearman_on']:+.2f}"},
+                })
+                if res["trap_demotion"] > 0 and res["novelty_penalty"] <= 0.75:
+                    st.success("Grounding caught the traps without punishing novelty.")
+                elif res["trap_demotion"] <= 0:
+                    st.warning("Grounding didn't demote the traps — coverage / "
+                               "placement issue. (One run is one noisy sample.)")
+                else:
+                    st.warning("Traps sank but novel ideas dropped too — the "
+                               "consensus-filter risk. Try grounding in review only.")
+
+    # ---- 6. Elo vs. an independent predictor -----------------------------
+    with st.container(border=True):
+        st.markdown(
+            "**6. Elo vs. an independent predictor** — does the Elo ranking agree "
+            "with a sequence model (AlphaGenome / Enformer)? Low correlation means "
+            "Elo alone isn't enough to pick wet-lab candidates. Build "
+            "`benchmark/variant_scores.json` (see `elo_vs_variant_score.py`); "
+            "without it, this shows synthetic demo data."
+        )
+        if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
+            from benchmark.elo_vs_variant_score import correlate, _load, _demo
+            scores_path = "benchmark/variant_scores.json"
+            if os.path.exists(scores_path):
+                elo, score, labels = _load(scores_path)
+                src = f"`{scores_path}`"
+            else:
+                elo, score, labels = _demo()
+                src = "synthetic demo data (no scores file found)"
+            res = correlate(elo, score)
+            st.caption(f"Source: {src}")
+            if res["spearman"] is None:
+                st.info(res["note"])
+            else:
+                st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
+                st.caption(res["verdict"])
+                import pandas as pd
+                df = pd.DataFrame(
+                    sorted(zip(labels, elo, score), key=lambda t: -t[1]),
+                    columns=["hypothesis", "Elo", "predictor score"])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
     st.divider()
     st.caption(
         "Full plan and recommended sequence of work: "
