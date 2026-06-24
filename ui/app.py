@@ -1015,41 +1015,10 @@ with tab5:
                     st.warning("Traps sank but novel ideas dropped too — the "
                                "consensus-filter risk. Try grounding in review only.")
 
-    # ---- 6. Elo vs. an independent predictor -----------------------------
+    # ---- 6. Alias / duplicate detection ----------------------------------
     with st.container(border=True):
         st.markdown(
-            "**6. Elo vs. an independent predictor** — does the Elo ranking agree "
-            "with a sequence model (AlphaGenome / Enformer)? Low correlation means "
-            "Elo alone isn't enough to pick wet-lab candidates. Build "
-            "`benchmark/variant_scores.json` (see `elo_vs_variant_score.py`); "
-            "without it, this shows synthetic demo data."
-        )
-        if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
-            from benchmark.elo_vs_variant_score import correlate, _load, _demo
-            scores_path = "benchmark/variant_scores.json"
-            if os.path.exists(scores_path):
-                elo, score, labels = _load(scores_path)
-                src = f"`{scores_path}`"
-            else:
-                elo, score, labels = _demo()
-                src = "synthetic demo data (no scores file found)"
-            res = correlate(elo, score)
-            st.caption(f"Source: {src}")
-            if res["spearman"] is None:
-                st.info(res["note"])
-            else:
-                st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
-                st.caption(res["verdict"])
-                import pandas as pd
-                df = pd.DataFrame(
-                    sorted(zip(labels, elo, score), key=lambda t: -t[1]),
-                    columns=["hypothesis", "Elo", "predictor score"])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-
-    # ---- 7. Alias / duplicate detection ----------------------------------
-    with st.container(border=True):
-        st.markdown(
-            "**7. Alias / duplicate detection** — where the ontology beats text "
+            "**6. Alias / duplicate detection** — where the ontology beats text "
             "similarity. Two hypotheses can be the *same idea* worded differently "
             "(\"multiple myeloma\" vs \"plasma cell myeloma\"). The metric is "
             "**separation**: how much higher a method scores true duplicates than "
@@ -1083,6 +1052,43 @@ with tab5:
                 "metrics": {"ontology separation": f"{res['ontology_separation']:+.2f}",
                             "embedding separation": f"{res['embedding_separation']:+.2f}"},
             })
+
+    # ---- 7. Elo vs. an independent predictor (AlphaGenome / Enformer) -----
+    with st.container(border=True):
+        st.markdown(
+            "**7. Elo vs. an independent predictor** — *the next direction.* Does the "
+            "Elo ranking agree with a sequence model (AlphaGenome / Enformer)? Low "
+            "correlation means Elo alone isn't enough to pick wet-lab candidates. "
+            "Build `benchmark/variant_scores.json` (see `elo_vs_variant_score.py`); "
+            "without it, this shows synthetic demo data."
+        )
+        _show_saved("elo_vs_predictor")
+        if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
+            from benchmark.elo_vs_variant_score import correlate, _load, _demo
+            scores_path = "benchmark/variant_scores.json"
+            if os.path.exists(scores_path):
+                elo, score, labels = _load(scores_path)
+                src = f"`{scores_path}`"
+            else:
+                elo, score, labels = _demo()
+                src = "synthetic demo data (no scores file found)"
+            res = correlate(elo, score)
+            st.caption(f"Source: {src}")
+            if res["spearman"] is None:
+                st.info(res["note"])
+            else:
+                st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
+                st.caption(res["verdict"])
+                import pandas as pd
+                df = pd.DataFrame(
+                    sorted(zip(labels, elo, score), key=lambda t: -t[1]),
+                    columns=["hypothesis", "Elo", "predictor score"])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                bench_results.save_run("elo_vs_predictor", {
+                    "label": "Elo vs. independent predictor",
+                    "params": {"n": res["n"]},
+                    "metrics": {"Spearman(Elo, predictor)": f"{res['spearman']:+.2f}"},
+                })
 
     st.divider()
     st.caption(
