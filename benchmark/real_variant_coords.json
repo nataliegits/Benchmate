@@ -1,0 +1,38 @@
+{
+  "SEL1L_prom": {
+    "chrom": "chr14",
+    "pos": 81499973,
+    "ref": "C",
+    "alt": "T"
+  },
+  "HERPUD1_enh": {
+    "chrom": "chr16",
+    "pos": 56914706,
+    "ref": "A",
+    "alt": "C"
+  },
+  "EDEM1_5utr": {
+    "chrom": "chr3",
+    "pos": 5207144,
+    "ref": "G",
+    "alt": "A"
+  },
+  "DERL1_intron": {
+    "chrom": "chr8",
+    "pos": 123015388,
+    "ref": "T",
+    "alt": "C"
+  },
+  "SYVN1_intergenic": {
+    "chrom": "chr11",
+    "pos": 65035798,
+    "ref": "G",
+    "alt": "A"
+  },
+  "XBP1_desert": {
+    "chrom": "chr22",
+    "pos": 28819554,
+    "ref": "G",
+    "alt": "A"
+  }
+}

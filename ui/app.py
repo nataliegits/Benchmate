@@ -1070,7 +1070,7 @@ with tab5:
                 "1. **Get a free API key** at [alphagenomedocs.com]"
                 "(https://www.alphagenomedocs.com/) → *Get started* → request an "
                 "API key (free for non-commercial use).\n"
-                "2. **Score in Colab:** open `benchmark/alphagenome_scoring_colab.ipynb` "
+                "2. **Score in Colab:** open `notebooks/03_alphagenome_variant_scoring.ipynb` "
                 "in [Colab](https://colab.research.google.com) (File → Upload "
                 "notebook), paste your key, Run all. It downloads "
                 "`alphagenome_scores.json`.\n"

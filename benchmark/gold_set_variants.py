@@ -84,7 +84,26 @@ GOLD_VARIANTS: list[dict] = [
 GOLD_VARIANTS_RANK = {i: i for i in range(len(GOLD_VARIANTS))}
 
 
+def _real_coords() -> dict:
+    """Load real GTEx coordinates if fetch_eqtls.py has produced them."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "real_variant_coords.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
 def variant_objects():
-    """Build co_scientist.variant_scorer.Variant objects for scoring."""
+    """Build co_scientist.variant_scorer.Variant objects for scoring.
+
+    Uses real GTEx coordinates from real_variant_coords.json when present
+    (run `python -m benchmark.fetch_eqtls`); otherwise the placeholders above.
+    """
     from co_scientist.variant_scorer import Variant
-    return [Variant(label=g["label"], **g["variant"]) for g in GOLD_VARIANTS]
+    real = _real_coords()
+    return [Variant(label=g["label"], **(real.get(g["label"], g["variant"])))
+            for g in GOLD_VARIANTS]
