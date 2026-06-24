@@ -1082,32 +1082,69 @@ with tab5:
                 "placeholders — swap in real regulatory variants before trusting "
                 "any number."
             )
+        up = st.file_uploader(
+            "Drop your scores file here — `alphagenome_scores.json` (from Colab) "
+            "or a merged `variant_scores.json`",
+            type=["json"], key="ev_up")
         if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
+            import json
+            import pandas as pd
             from benchmark.elo_vs_variant_score import correlate, _load, _demo
-            scores_path = "benchmark/variant_scores.json"
-            if os.path.exists(scores_path):
-                elo, score, labels = _load(scores_path)
-                src = f"`{scores_path}`"
+            elo = score = labels = None
+            src = ""
+            if up is not None:
+                data = json.load(up)
+                if isinstance(data, list):                      # merged variant_scores.json
+                    elo = [float(r["elo"]) for r in data]
+                    score = [float(r["score"]) for r in data]
+                    labels = [str(r.get("label", i)) for i, r in enumerate(data)]
+                    src = "uploaded variant_scores.json"
+                elif isinstance(data, dict):                    # raw {label: score} from Colab
+                    from benchmark.gold_set_variants import GOLD_VARIANTS
+                    if os.environ.get("ANTHROPIC_API_KEY") and not IS_HOSTED:
+                        from benchmark.build_variant_scores import _elo_by_label
+                        with st.spinner("Ranking the variant hypotheses to get Elo…"):
+                            em = _elo_by_label(6, 8)
+                        trip = [(g["label"], em[g["label"]], float(data[g["label"]]))
+                                for g in GOLD_VARIANTS
+                                if g["label"] in data and g["label"] in em]
+                        labels = [t[0] for t in trip]
+                        elo = [t[1] for t in trip]
+                        score = [t[2] for t in trip]
+                        src = "uploaded AlphaGenome scores + freshly-ranked Elo"
+                    else:
+                        st.warning(
+                            "That's a raw AlphaGenome scores file (label → score). I also "
+                            "need an Elo column to correlate. Set your Anthropic key to "
+                            "rank them here, run `python -m benchmark.build_variant_scores` "
+                            "locally, or upload the merged `variant_scores.json` instead."
+                        )
             else:
-                elo, score, labels = _demo()
-                src = "synthetic demo data (no scores file found)"
-            res = correlate(elo, score)
-            st.caption(f"Source: {src}")
-            if res["spearman"] is None:
-                st.info(res["note"])
-            else:
-                st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
-                st.caption(res["verdict"])
-                import pandas as pd
-                df = pd.DataFrame(
-                    sorted(zip(labels, elo, score), key=lambda t: -t[1]),
-                    columns=["hypothesis", "Elo", "predictor score"])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-                bench_results.save_run("elo_vs_predictor", {
-                    "label": "Elo vs. independent predictor",
-                    "params": {"n": res["n"]},
-                    "metrics": {"Spearman(Elo, predictor)": f"{res['spearman']:+.2f}"},
-                })
+                scores_path = "benchmark/variant_scores.json"
+                if os.path.exists(scores_path):
+                    elo, score, labels = _load(scores_path)
+                    src = f"`{scores_path}`"
+                else:
+                    elo, score, labels = _demo()
+                    src = "synthetic demo data (no file uploaded)"
+
+            if elo is not None:
+                res = correlate(elo, score)
+                st.caption(f"Source: {src}")
+                if res["spearman"] is None:
+                    st.info(res["note"])
+                else:
+                    st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
+                    st.caption(res["verdict"])
+                    df = pd.DataFrame(
+                        sorted(zip(labels, elo, score), key=lambda t: -t[1]),
+                        columns=["hypothesis", "Elo", "predictor score"])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    bench_results.save_run("elo_vs_predictor", {
+                        "label": "Elo vs. independent predictor",
+                        "params": {"n": res["n"]},
+                        "metrics": {"Spearman(Elo, predictor)": f"{res['spearman']:+.2f}"},
+                    })
 
     st.divider()
     st.caption(
