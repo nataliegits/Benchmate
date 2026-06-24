@@ -196,12 +196,13 @@ with st.sidebar:
 # ────────────────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "New perturbation",
     "Inspect cache",
     "Run Benchmate",
     "Hermes preview",
     "Benchmark",
+    "Cross-check with other models",
 ])
 
 # ── Tab 1 ────────────────────────────────────────────────────
@@ -1053,99 +1054,6 @@ with tab5:
                             "embedding separation": f"{res['embedding_separation']:+.2f}"},
             })
 
-    # ---- 7. Elo vs. an independent predictor (AlphaGenome / Enformer) -----
-    with st.container(border=True):
-        st.markdown(
-            "**7. Elo vs. an independent predictor** — *the next direction.* Does the "
-            "Elo ranking agree with a sequence model (AlphaGenome / Enformer)? Low "
-            "correlation means Elo alone isn't enough to pick wet-lab candidates. "
-            "Build `benchmark/variant_scores.json` (see `elo_vs_variant_score.py`); "
-            "without it, this shows synthetic demo data."
-        )
-        _show_saved("elo_vs_predictor")
-        with st.expander("How to produce real scores (AlphaGenome setup)"):
-            st.markdown(
-                "AlphaGenome needs Python 3.10+, so score in **Google Colab**, then "
-                "correlate here. One time:\n"
-                "1. **Get a free API key** at [alphagenomedocs.com]"
-                "(https://www.alphagenomedocs.com/) → *Get started* → request an "
-                "API key (free for non-commercial use).\n"
-                "2. **Score in Colab:** open `notebooks/03_alphagenome_variant_scoring.ipynb` "
-                "in [Colab](https://colab.research.google.com) (File → Upload "
-                "notebook), paste your key, Run all. It downloads "
-                "`alphagenome_scores.json`.\n"
-                "3. **Back on your Mac:** put that file in `benchmark/`, then run "
-                "`python -m benchmark.build_variant_scores` (needs your Anthropic "
-                "key) — it adds the Elo column and writes `variant_scores.json`.\n"
-                "4. **Click the button below** to see the correlation.\n\n"
-                "⚠️ The variant coordinates in `gold_set_variants.py` are "
-                "placeholders — swap in real regulatory variants before trusting "
-                "any number."
-            )
-        up = st.file_uploader(
-            "Drop your scores file here — `alphagenome_scores.json` (from Colab) "
-            "or a merged `variant_scores.json`",
-            type=["json"], key="ev_up")
-        if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
-            import json
-            import pandas as pd
-            from benchmark.elo_vs_variant_score import correlate, _load, _demo
-            elo = score = labels = None
-            src = ""
-            if up is not None:
-                data = json.load(up)
-                if isinstance(data, list):                      # merged variant_scores.json
-                    elo = [float(r["elo"]) for r in data]
-                    score = [float(r["score"]) for r in data]
-                    labels = [str(r.get("label", i)) for i, r in enumerate(data)]
-                    src = "uploaded variant_scores.json"
-                elif isinstance(data, dict):                    # raw {label: score} from Colab
-                    from benchmark.gold_set_variants import GOLD_VARIANTS
-                    if os.environ.get("ANTHROPIC_API_KEY") and not IS_HOSTED:
-                        from benchmark.build_variant_scores import _elo_by_label
-                        with st.spinner("Ranking the variant hypotheses to get Elo…"):
-                            em = _elo_by_label(6, 8)
-                        trip = [(g["label"], em[g["label"]], float(data[g["label"]]))
-                                for g in GOLD_VARIANTS
-                                if g["label"] in data and g["label"] in em]
-                        labels = [t[0] for t in trip]
-                        elo = [t[1] for t in trip]
-                        score = [t[2] for t in trip]
-                        src = "uploaded AlphaGenome scores + freshly-ranked Elo"
-                    else:
-                        st.warning(
-                            "That's a raw AlphaGenome scores file (label → score). I also "
-                            "need an Elo column to correlate. Set your Anthropic key to "
-                            "rank them here, run `python -m benchmark.build_variant_scores` "
-                            "locally, or upload the merged `variant_scores.json` instead."
-                        )
-            else:
-                scores_path = "benchmark/variant_scores.json"
-                if os.path.exists(scores_path):
-                    elo, score, labels = _load(scores_path)
-                    src = f"`{scores_path}`"
-                else:
-                    elo, score, labels = _demo()
-                    src = "synthetic demo data (no file uploaded)"
-
-            if elo is not None:
-                res = correlate(elo, score)
-                st.caption(f"Source: {src}")
-                if res["spearman"] is None:
-                    st.info(res["note"])
-                else:
-                    st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
-                    st.caption(res["verdict"])
-                    df = pd.DataFrame(
-                        sorted(zip(labels, elo, score), key=lambda t: -t[1]),
-                        columns=["hypothesis", "Elo", "predictor score"])
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    bench_results.save_run("elo_vs_predictor", {
-                        "label": "Elo vs. independent predictor",
-                        "params": {"n": res["n"]},
-                        "metrics": {"Spearman(Elo, predictor)": f"{res['spearman']:+.2f}"},
-                    })
-
     st.divider()
     st.caption(
         "Full plan and recommended sequence of work: "
@@ -1156,3 +1064,147 @@ with tab5:
         "The same benchmarks also run as CLI commands "
         "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
+
+# ── Tab 6 — Cross-check with other models ─────────────────────
+with tab6:
+    from benchmark import results as bench_results
+    from benchmark.elo_vs_variant_score import correlate, _load, _demo
+    IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
+
+    def _show_saved(name: str) -> None:
+        run = bench_results.latest(name)
+        if not run:
+            if IS_HOSTED:
+                st.caption("No saved run yet — run this locally to populate the demo.")
+            return
+        p = run.get("params", {})
+        bits = ", ".join(f"{k}={v}" for k, v in p.items())
+        st.caption(f"📊 Saved run{(' · ' + bits) if bits else ''} · "
+                   f"captured {run.get('captured', '?')}")
+        metrics = run.get("metrics", {})
+        if metrics:
+            cols = st.columns(len(metrics))
+            for col, (k, v) in zip(cols, metrics.items()):
+                col.metric(k, v)
+
+    def _show_correlation(elo, score, labels, src, save_key, score_col):
+        import pandas as pd
+        res = correlate(elo, score)
+        st.caption(f"Source: {src}")
+        if res["spearman"] is None:
+            st.info(res["note"]); return
+        st.metric("Spearman(Elo, predictor)", f"{res['spearman']:+.2f}")
+        st.caption(res["verdict"])
+        df = pd.DataFrame(sorted(zip(labels, elo, score), key=lambda t: -t[1]),
+                          columns=["hypothesis", "Elo", score_col])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        bench_results.save_run(save_key, {
+            "label": save_key, "params": {"n": res["n"]},
+            "metrics": {"Spearman(Elo, predictor)": f"{res['spearman']:+.2f}"}})
+
+    st.markdown("### Cross-check with other models")
+    st.markdown(
+        "The Elo leaderboard is the LLM judge's opinion. Before trusting it to pick "
+        "a wet-lab candidate, cross-check it against **independent quantitative "
+        "models** — each scoring a hypothesis from a completely different angle. "
+        "Low correlation = a flag. This is the *panel of judges*."
+    )
+
+    # ----- AlphaGenome: regulatory / expression -----
+    with st.container(border=True):
+        st.markdown(
+            "**AlphaGenome — regulatory effect** *(does a variant change expression?)*. "
+            "Drop `variant_scores.json` (merged Elo + score) or a raw "
+            "`alphagenome_scores.json` from Colab. See `benchmark/ALPHAGENOME_PLAN.md`."
+        )
+        _show_saved("elo_vs_predictor")
+        with st.expander("How to produce real scores (AlphaGenome setup)"):
+            st.markdown(
+                "1. Free key at [alphagenomedocs.com](https://www.alphagenomedocs.com/) "
+                "→ *Get started* (sign in with a personal @gmail).\n"
+                "2. Score in `benchmark/alphagenome_scoring_colab.ipynb` on "
+                "[Colab](https://colab.research.google.com) → downloads "
+                "`alphagenome_scores.json`.\n"
+                "3. Put it in `benchmark/`, run `python -m benchmark.build_variant_scores`.\n"
+                "⚠️ Variant coordinates: run `python -m benchmark.fetch_eqtls` for real GTEx eQTLs."
+            )
+        up = st.file_uploader("Drop alphagenome_scores.json or variant_scores.json",
+                              type=["json"], key="ag_up")
+        if st.button("Show AlphaGenome correlation", key="ag_btn"):
+            import json
+            elo = score = labels = None; src = ""
+            if up is not None:
+                data = json.load(up)
+                if isinstance(data, list):
+                    elo = [float(r["elo"]) for r in data]
+                    score = [float(r["score"]) for r in data]
+                    labels = [str(r.get("label", i)) for i, r in enumerate(data)]
+                    src = "uploaded variant_scores.json"
+                elif isinstance(data, dict):
+                    from benchmark.gold_set_variants import GOLD_VARIANTS
+                    if os.environ.get("ANTHROPIC_API_KEY") and not IS_HOSTED:
+                        from benchmark.build_variant_scores import _elo_by_label
+                        with st.spinner("Ranking variant hypotheses for Elo…"):
+                            em = _elo_by_label(6, 8)
+                        trip = [(g["label"], em[g["label"]], float(data[g["label"]]))
+                                for g in GOLD_VARIANTS
+                                if g["label"] in data and g["label"] in em]
+                        labels = [t[0] for t in trip]; elo = [t[1] for t in trip]
+                        score = [t[2] for t in trip]
+                        src = "uploaded AlphaGenome scores + freshly-ranked Elo"
+                    else:
+                        st.warning("Raw scores need an Elo column — set your Anthropic "
+                                   "key, run build_variant_scores locally, or upload "
+                                   "the merged variant_scores.json.")
+            else:
+                p = "benchmark/variant_scores.json"
+                if os.path.exists(p):
+                    elo, score, labels = _load(p); src = f"`{p}`"
+                else:
+                    elo, score, labels = _demo(); src = "synthetic demo data"
+            if elo is not None:
+                _show_correlation(elo, score, labels, src,
+                                  "elo_vs_predictor", "AlphaGenome score")
+
+    # ----- Boltz: structure / binding -----
+    with st.container(border=True):
+        st.markdown(
+            "**Boltz — structure & binding** *(does the drug actually bind the "
+            "target?)*. The complement to AlphaGenome: it scores binding-style "
+            "hypotheses. Drop a `boltz_scores.json` (merged Elo + score)."
+        )
+        _show_saved("elo_vs_boltz")
+        with st.expander("How to produce Boltz scores"):
+            st.markdown(
+                "1. Sign up + redeem **$100 credits (code BOLTZLAUNCH)** at "
+                "[api.boltz.bio](https://api.boltz.bio/console/signup), create an API "
+                "key, `export BOLTZ_API_KEY=...`.\n"
+                "2. For each binding hypothesis, score the protein+ligand with "
+                "`co_scientist/boltz_scorer.py` (`BoltzTarget` → `score_binding`).\n"
+                "3. Save `benchmark/boltz_scores.json` as "
+                "`[{label, elo, score}, ...]`.\n"
+                "⚠️ The Boltz API is new — verify the endpoints in boltz_scorer.py "
+                "against the console's API reference."
+            )
+        upb = st.file_uploader("Drop boltz_scores.json", type=["json"], key="bz_up")
+        if st.button("Show Boltz correlation", key="bz_btn"):
+            import json
+            elo = score = labels = None; src = ""
+            if upb is not None:
+                data = json.load(upb)
+                if isinstance(data, list):
+                    elo = [float(r["elo"]) for r in data]
+                    score = [float(r["score"]) for r in data]
+                    labels = [str(r.get("label", i)) for i, r in enumerate(data)]
+                    src = "uploaded boltz_scores.json"
+                else:
+                    st.warning("Upload a merged list of {label, elo, score}.")
+            else:
+                p = "benchmark/boltz_scores.json"
+                if os.path.exists(p):
+                    elo, score, labels = _load(p); src = f"`{p}`"
+                else:
+                    st.info("No boltz_scores.json yet — see the setup steps above.")
+            if elo is not None:
+                _show_correlation(elo, score, labels, src,
+                                  "elo_vs_boltz", "Boltz score")
