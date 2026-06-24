@@ -1046,6 +1046,44 @@ with tab5:
                     columns=["hypothesis", "Elo", "predictor score"])
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
+    # ---- 7. Alias / duplicate detection ----------------------------------
+    with st.container(border=True):
+        st.markdown(
+            "**7. Alias / duplicate detection** — where the ontology beats text "
+            "similarity. Two hypotheses can be the *same idea* worded differently "
+            "(\"multiple myeloma\" vs \"plasma cell myeloma\"). The metric is "
+            "**separation**: how much higher a method scores true duplicates than "
+            "unrelated pairs. No API key needed — just embeddings + OntoMCP lookups."
+        )
+        _show_saved("alias_dedup")
+        if st.button("Run alias-dedup", key="al_btn"):
+            from benchmark.alias_dedup import (summarize, _verdict,
+                                               _build_rows_live, _build_rows_demo)
+            from co_scientist.ontology import ontomcp_available
+            live = ontomcp_available() and not IS_HOSTED
+            rows = _build_rows_live() if live else _build_rows_demo()
+            st.caption("Source: live OntoMCP" if live
+                       else "synthetic demo data (OntoMCP not reachable / hosted)")
+            res = summarize(rows)
+            c1, c2 = st.columns(2)
+            c1.metric("ontology separation", f"{res['ontology_separation']:+.2f}",
+                      help="same − different. Higher = better at spotting duplicates.")
+            c2.metric("embedding separation", f"{res['embedding_separation']:+.2f}")
+            import pandas as pd
+            df = pd.DataFrame(
+                [{"pair": r["kind"], "label": r["label"],
+                  "ontology": round(r["onto"], 2), "embedding": round(r["emb"], 2),
+                  "note": ("⚠ not unified" if r.get("onto_na") else "")}
+                 for r in rows])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption(_verdict(res))
+            bench_results.save_run("alias_dedup", {
+                "label": "Alias / duplicate detection",
+                "params": {"pairs": len(rows)},
+                "metrics": {"ontology separation": f"{res['ontology_separation']:+.2f}",
+                            "embedding separation": f"{res['embedding_separation']:+.2f}"},
+            })
+
     st.divider()
     st.caption(
         "Full plan and recommended sequence of work: "

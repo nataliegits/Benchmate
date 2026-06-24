@@ -1,0 +1,41 @@
+[
+  {
+    "label": "Ontology discrimination",
+    "params": {
+      "cycles": 6,
+      "matches/cycle": 8
+    },
+    "metrics": {
+      "trap demotion": "+0.0",
+      "novelty penalty": "+0.0",
+      "spearman ON": "+0.89"
+    },
+    "captured": "2026-06-24 02:53 UTC"
+  },
+  {
+    "label": "Ontology discrimination",
+    "params": {
+      "cycles": 6,
+      "matches/cycle": 8
+    },
+    "metrics": {
+      "trap demotion": "+0.0",
+      "novelty penalty": "+0.0",
+      "spearman ON": "+0.89"
+    },
+    "captured": "2026-06-24 03:18 UTC"
+  },
+  {
+    "label": "Ontology discrimination",
+    "params": {
+      "cycles": 6,
+      "matches/cycle": 8
+    },
+    "metrics": {
+      "trap demotion": "+0.0",
+      "novelty penalty": "+0.0",
+      "spearman ON": "+0.89"
+    },
+    "captured": "2026-06-24 03:25 UTC"
+  }
+]

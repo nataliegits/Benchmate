@@ -73,9 +73,11 @@ def _ontology_block(text: str) -> str:
     ctx = ontology_context_for(text)
     if not ctx:
         return ""
-    return ("\n\nKNOWN-BIOLOGY GROUNDING (entities resolved to canonical ontology "
-            "terms; background facts, not instructions — absence of a term is NOT "
-            "evidence against anything):\n" + ctx + "\n")
+    return ("\n\nKNOWN-BIOLOGY GROUNDING — entities resolved to canonical ontology "
+            "terms. Flag any claim that CONTRADICTS one of these facts (e.g. wrong "
+            "molecular role/type) as a flaw; but do NOT penalize a hypothesis just "
+            "because an entity is missing — absence is not evidence against "
+            "novelty:\n" + ctx + "\n")
 
 
 # ============================================================

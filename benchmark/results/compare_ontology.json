@@ -1,0 +1,15 @@
+[
+  {
+    "label": "Ontology grounding (fair judge, OFF vs ON)",
+    "params": {
+      "cycles": 6,
+      "matches/cycle": 8
+    },
+    "metrics": {
+      "grounding OFF \u2014 spearman": "+0.94",
+      "grounding ON \u2014 spearman": "+0.94",
+      "\u0394 (ON \u2212 OFF)": "+0.00"
+    },
+    "captured": "2026-06-24 02:48 UTC"
+  }
+]

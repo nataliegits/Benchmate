@@ -83,43 +83,51 @@ GOLD_ADV: list[dict] = [
                     "resistant lines ± bortezomib; track ER content turnover and "
                     "viability; look for ER-phagy flux upregulation under bortezomib.")),
 
-    # ---------- TRAP · fluent but contradicts a canonical fact (rank low) ----------
+    # ---------- TRAP · fluent, but the wrong MOLECULAR ROLE on an entity that
+    # resolves — so a canonical fact contradicts the claim. These target roles a
+    # text-only judge can plausibly mis-state, not famous textbook facts. ----------
     dict(kind="trap", tier="C", statement=(
-        "EDEM1 clears the unfolded protein response by directly degrading the "
-        "transcription factor XBP1; inhibiting EDEM1 therefore restores UPR signalling "
-        "and kills bortezomib-resistant cells."),
-        rationale=("If EDEM1 removes XBP1, resistant cells would suppress UPR to survive, "
-                   "and EDEM1 blockade would reactivate it."),
-        experiment=("Knock down EDEM1 and measure XBP1 protein and UPR target genes; "
-                    "score viability ± bortezomib."),
-        why=("FALSE: EDEM1 is an ER alpha-1,2-mannosidase that targets misfolded "
-             "GLYCOPROTEINS for ERAD — it does not degrade the transcription factor "
-             "XBP1 and does not 'clear' the UPR. OntoMCP's GO term for EDEM1 / UPR "
-             "should expose the misuse.")),
+        "In bortezomib-resistant cells the proteasome switches to a chaperone "
+        "function, refolding misfolded immunoglobulin light chains back to native "
+        "state instead of degrading them; enhancing this proteasomal refolding "
+        "restores proteostasis and resensitises cells."),
+        rationale=("If the proteasome refolds rather than degrades, resistant cells "
+                   "could clear their light-chain burden without proteolysis, and "
+                   "promoting refolding would relieve proteotoxic stress."),
+        experiment=("Express a refolding-biased proteasome variant in resistant "
+                    "lines and measure light-chain refolding vs degradation and "
+                    "bortezomib sensitivity."),
+        why=("FALSE: the proteasome is a proteolytic complex that DEGRADES "
+             "ubiquitinated proteins — it is not a chaperone and does not refold "
+             "substrates. The canonical proteasome term (a peptidase/degradation "
+             "complex) contradicts the 'refolds' claim.")),
 
     dict(kind="trap", tier="C", statement=(
-        "HRD1 is a cytosolic serine/threonine kinase that activates p97/VCP by "
-        "phosphorylation; kinase-dead HRD1 mutants abolish retrotranslocation and "
-        "reverse bortezomib resistance."),
+        "Derlin-1 is the E3 ubiquitin ligase that directly attaches ubiquitin to "
+        "misfolded light chains during retrotranslocation; Derlin-1 ligase "
+        "inhibitors therefore block ERAD and resensitise resistant myeloma cells."),
+        rationale=("If Derlin-1 is the ligase tagging substrates for degradation, "
+                   "inhibiting its catalytic activity would stall ERAD and re-impose "
+                   "proteotoxic stress."),
+        experiment=("Treat resistant lines with a Derlin-1 ligase-active-site "
+                    "inhibitor and assay substrate ubiquitination and viability "
+                    "± bortezomib."),
+        why=("FALSE: Derlin-1 (DERL1) is a retrotranslocation channel component "
+             "(a rhomboid pseudoprotease), NOT an E3 ubiquitin ligase — HRD1 is the "
+             "ligase. The canonical 'Derlin-1 retrotranslocation complex' term "
+             "contradicts the 'E3 ligase' role. (A plausible-sounding mix-up.)")),
+
+    dict(kind="trap", tier="C", statement=(
+        "HRD1 is a cytosolic serine/threonine kinase that activates the p97/VCP "
+        "motor by phosphorylation; kinase-dead HRD1 mutants abolish "
+        "retrotranslocation and reverse bortezomib resistance."),
         rationale=("If HRD1 kinase activity licenses p97, a kinase-dead mutant would "
                    "stall ERAD and re-sensitise cells."),
         experiment=("Express wild-type vs kinase-dead HRD1 in resistant lines; assay "
                     "p97 phosphorylation and bortezomib sensitivity."),
-        why=("FALSE: HRD1 (SYVN1) is an ER membrane-anchored E3 UBIQUITIN LIGASE, not "
-             "a kinase, and does not phosphorylate p97. The canonical PR/GO definition "
-             "(E3 ubiquitin-protein ligase) contradicts the 'kinase' claim.")),
-
-    dict(kind="trap", tier="C", statement=(
-        "The ERAD regulator HERPUD3 forms a fusion with SEL1L that is selectively "
-        "amplified in bortezomib-resistant myeloma; silencing the HERPUD3–SEL1L fusion "
-        "restores proteotoxic killing."),
-        rationale=("A resistance-specific fusion protein would be a clean, druggable "
-                   "dependency."),
-        experiment=("Detect the HERPUD3–SEL1L fusion by RNA-seq in resistant vs "
-                    "parental lines; knock it down and score viability."),
-        why=("FABRICATED ENTITY: 'HERPUD3' is not a real gene (the real ERAD proteins "
-             "are HERPUD1/HERP and HERPUD2). It should fail to resolve in OntoMCP, "
-             "which Reflection can flag as an unrecognised/likely-invented entity.")),
+        why=("FALSE: HRD1 is an ER membrane E3 UBIQUITIN LIGASE, not a kinase. The "
+             "canonical 'Hrd1p ubiquitin ligase complex' term contradicts the "
+             "'kinase' claim. Positive control — this entity resolves cleanly.")),
 ]
 
 # gold rank = index (0 = best). Solid + novel sit at the top; traps at the bottom.
