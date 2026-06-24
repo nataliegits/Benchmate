@@ -1063,6 +1063,25 @@ with tab5:
             "without it, this shows synthetic demo data."
         )
         _show_saved("elo_vs_predictor")
+        with st.expander("How to produce real scores (AlphaGenome setup)"):
+            st.markdown(
+                "AlphaGenome needs Python 3.10+, so score in **Google Colab**, then "
+                "correlate here. One time:\n"
+                "1. **Get a free API key** at [alphagenomedocs.com]"
+                "(https://www.alphagenomedocs.com/) → *Get started* → request an "
+                "API key (free for non-commercial use).\n"
+                "2. **Score in Colab:** open `benchmark/alphagenome_scoring_colab.ipynb` "
+                "in [Colab](https://colab.research.google.com) (File → Upload "
+                "notebook), paste your key, Run all. It downloads "
+                "`alphagenome_scores.json`.\n"
+                "3. **Back on your Mac:** put that file in `benchmark/`, then run "
+                "`python -m benchmark.build_variant_scores` (needs your Anthropic "
+                "key) — it adds the Elo column and writes `variant_scores.json`.\n"
+                "4. **Click the button below** to see the correlation.\n\n"
+                "⚠️ The variant coordinates in `gold_set_variants.py` are "
+                "placeholders — swap in real regulatory variants before trusting "
+                "any number."
+            )
         if st.button("Show Elo-vs-predictor correlation", key="ev_btn"):
             from benchmark.elo_vs_variant_score import correlate, _load, _demo
             scores_path = "benchmark/variant_scores.json"
