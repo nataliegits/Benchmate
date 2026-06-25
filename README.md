@@ -8,6 +8,14 @@ Elo tournament, and refine the winners. PubMed is wired in as a real tool.
 so the agents can reason about your own experimental data, not just the
 literature.
 
+On top of that, Benchmate adds two evaluation layers beyond the LLM judge: a
+**structured-knowledge layer** (OntoMCP) that grounds the judge in canonical
+biology, and a **"cross-check with other models" panel** that scores hypotheses
+with independent quantitative models — **AlphaGenome** (regulatory effect from
+DNA) and **Boltz** (structure & binding). The idea: a trustworthy co-scientist
+needs a *panel of judges* — semantic, structured, and quantitative — each
+catching what the others miss.
+
 Try it: **[benchmate.streamlit.app](https://benchmate.streamlit.app)**
 
 ## What's in here
@@ -27,15 +35,24 @@ Benchmate/
 │   ├── agents.py           # the 7 agents (Generation reads Geneformer cache,
 │   │                       # Reflection fact-checks against it)
 │   ├── graph.py            # LangGraph wiring of the supervisor loop
-│   └── ontology.py         # OntoMCP grounding: canonical ontology terms
-│                           # injected into the judge prompt as background facts
-├── benchmark/              # Is the Elo leaderboard trustworthy? (see below)
+│   ├── ontology.py         # OntoMCP grounding: canonical ontology terms fed to
+│   │                       # the judge + Generation/Reflection/Proximity/Supervisor
+│   ├── variant_scorer.py   # AlphaGenome / Enformer — regulatory-effect scoring
+│   └── boltz_scorer.py     # Boltz API — structure & binding scoring
+├── benchmark/              # Is the leaderboard trustworthy + how does it cross-check?
 │   ├── simulate.py         # free Monte Carlo over the real elo.py
 │   ├── metrics.py          # Spearman, top-k, churn, transitivity
 │   ├── fair_judge.py       # order-swapped, bias-aware judge (drop-in)
 │   ├── judge_eval.py       # live judge accuracy / position-bias / consistency
 │   ├── gold_set.py         # tier A/B/C gold hypotheses for validation
-│   ├── run_benchmark.py    # CLI: simulate | judge-eval | validate | compare
+│   ├── gold_set_adversarial.py   # solid / fluent-but-false / novel-but-true
+│   ├── run_adversarial.py        # ontology discrimination test
+│   ├── alias_dedup.py            # ontology vs text similarity (identity)
+│   ├── gold_set_variants.py · fetch_eqtls.py · build_variant_scores.py  # AlphaGenome
+│   ├── gold_set_binding.py · build_boltz_scores.py   # Boltz binding cross-check
+│   ├── elo_vs_variant_score.py   # Elo vs an independent quantitative score
+│   ├── results.py          # saves runs so the hosted app can display them
+│   ├── run_benchmark.py    # CLI: simulate | judge-eval | validate | compare [--ontology]
 │   └── BENCHMARKING_PLAN.md
 ├── notebooks/              # Geneformer perturbation notebooks (Colab)
 │   ├── 01_geneformer_erad_perturbation.ipynb
@@ -43,7 +60,7 @@ Benchmate/
 ├── data/geneformer/        # cached perturbation results (CSV, gitignored)
 │   └── README.md           # expected CSV schema
 ├── ui/                     # Streamlit UI
-│   ├── app.py              # 4-tab Streamlit app
+│   ├── app.py              # 6-tab Streamlit app
 │   ├── notebook_gen.py     # parameterise notebook 02 with user's genes
 │   ├── colab_handoff.py    # push notebook to Gist (API or gh CLI)
 │   └── watcher.py          # optional: Drive sync folder watcher
@@ -74,7 +91,7 @@ checkpointed to `state.json`; resume with `python run.py --resume`.
 streamlit run ui/app.py
 ```
 
-Opens at `http://localhost:8501`. Four tabs:
+Opens at `http://localhost:8501`. Six tabs:
 
 1. **New perturbation.** Type gene symbols, pick a cell context. Resolves
    to Ensembl IDs via mygene, generates a parameterised copy of
@@ -86,6 +103,13 @@ Opens at `http://localhost:8501`. Four tabs:
    stream into the page. State downloads when finished.
 4. **Hermes preview.** See the JSON shape Hermes receives when wired up
    for chat-driven runs.
+5. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
+   the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
+   grounding compare, and the discrimination + alias-dedup tests.
+6. **Cross-check with other models.** Correlate the Elo ranking against
+   independent quantitative models — AlphaGenome (regulatory) and Boltz
+   (binding). Low correlation flags hypotheses the leaderboard alone
+   shouldn't pick for the bench.
 
 ## The Geneformer integration
 
@@ -107,11 +131,12 @@ See `data/geneformer/README.md` for the expected CSV schema.
 ## Ontology grounding for the judge
 
 `co_scientist/ontology.py` is the **structured-knowledge layer** — the same
-evidence-injection pattern as Geneformer, but for the Ranking judge instead of
-Generation. Before the fair judge compares two hypotheses, it resolves the
-biological entities each one mentions (genes, proteins, complexes, diseases,
-small molecules, cell types) to canonical ontology terms and appends them to
-the judge prompt as a *"known-biology grounding"* block.
+evidence-injection pattern as Geneformer. It started on the Ranking judge and is
+now fed to five agents (judge, Generation, Reflection, Proximity, Supervisor).
+Before the fair judge compares two hypotheses, it resolves the biological
+entities each one mentions (genes, proteins, complexes, diseases, small
+molecules, cell types) to canonical ontology terms and appends them to the
+judge prompt as a *"known-biology grounding"* block.
 
 It talks to [**OntoMCP**](https://github.com/jeanlouishoneine-tech/OntoMCP), a
 small MCP server + HTTP API over EBI's OLS4 that returns real CURIEs with no
@@ -152,6 +177,41 @@ python -m benchmark.run_benchmark compare --ontology
 
 (One run is a single noisy sample — run it ≥3× each way and compare ranges
 before calling the layer a win.)
+
+## Cross-check with other models (the panel of judges)
+
+The Elo leaderboard is the LLM judge's opinion. Before trusting it to choose a
+wet-lab candidate, Benchmate cross-checks it against **independent quantitative
+models**, each scoring the slice of hypotheses it can actually speak to. Low
+correlation with Elo is a flag. This lives in the **"Cross-check with other
+models"** Streamlit tab and in `benchmark/elo_vs_variant_score.py`.
+
+| Model | Question it answers | Tooling | Access |
+|---|---|---|---|
+| **AlphaGenome** | does a *variant* change expression? | `co_scientist/variant_scorer.py` | free key, score in Colab (needs Py 3.10+) |
+| **Boltz** | does a *molecule* bind the target? | `co_scientist/boltz_scorer.py` | plain API, $100 launch credits (`BOLTZLAUNCH`) |
+
+Each follows the same recipe: frame the hypotheses the model can score (regulatory
+variants for AlphaGenome, protein+ligand pairs for Boltz), score them, and
+correlate against the Elo ranking.
+
+```bash
+# AlphaGenome (regulatory):
+python -m benchmark.fetch_eqtls            # real GTEx eQTL coordinates
+#   ...score in benchmark/alphagenome_scoring_colab.ipynb, then:
+python -m benchmark.build_variant_scores   # merge Elo + score -> variant_scores.json
+
+# Boltz (binding):
+export BOLTZ_API_KEY=...                    # api.boltz.bio (redeem BOLTZLAUNCH)
+python -m benchmark.build_boltz_scores      # score + merge -> boltz_scores.json
+
+# see either correlation:
+python -m benchmark.elo_vs_variant_score --scores benchmark/boltz_scores.json
+```
+
+The gold sets (`gold_set_variants.py`, `gold_set_binding.py`) ship with
+**placeholder coordinates/sequences** — drop in real ones before trusting a
+number. Both scorers are fail-soft: no API key → no score, never a crash.
 
 ## Benchmarking the Elo tournament
 
