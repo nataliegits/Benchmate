@@ -27,6 +27,7 @@ from __future__ import annotations
 GOLD_BINDING: list[dict] = [
 
     dict(tier="A", gene="p97/VCP", drug="CB-5083", label="p97_CB5083",
+         uniprot_gene="VCP",
          protein="MELE_PLACEHOLDER_p97",          # TODO: real VCP/p97 UniProt seq
          ligand_smiles="CC(C)c1nc(N)c2cc(-c3cn(C)c4ncccc34)ccc2n1",  # CB-5083 (verify)
          statement=("CB-5083 inhibits the p97/VCP retrotranslocation motor, "
@@ -37,6 +38,7 @@ GOLD_BINDING: list[dict] = [
                     "binding hypothesis.")),
 
     dict(tier="A", gene="proteasome 20S", drug="bortezomib", label="psmb5_btz",
+         uniprot_gene="PSMB5",
          protein="MELE_PLACEHOLDER_PSMB5",         # TODO: real PSMB5 seq
          ligand_smiles="CC(C)C[C@@H](C(=O)N[C@@H](Cc1ccccc1)C(=O)NB(O)O)NC(=O)c1cnccn1",  # bortezomib (verify)
          statement=("Bortezomib engages the chymotrypsin-like β5 (PSMB5) subunit "
@@ -46,6 +48,7 @@ GOLD_BINDING: list[dict] = [
                     "for a real, strong binder.")),
 
     dict(tier="B", gene="HRD1 (SYVN1)", drug="LS-102", label="hrd1_ls102",
+         uniprot_gene="SYVN1",
          protein="MELE_PLACEHOLDER_SYVN1",         # TODO: real SYVN1 seq
          ligand_smiles="O=C(O)c1ccccc1",           # placeholder SMILES — replace
          statement=("A small-molecule HRD1 ligase inhibitor blocks ERAD substrate "
@@ -54,6 +57,7 @@ GOLD_BINDING: list[dict] = [
                     "validated than p97/proteasome — moderate confidence.")),
 
     dict(tier="B", gene="EDEM1", drug="kifunensine", label="edem1_kif",
+         uniprot_gene="EDEM1",
          protein="MELE_PLACEHOLDER_EDEM1",         # TODO: real EDEM1 seq
          ligand_smiles="OCC1OC(O)C(O)C(O)C1O",     # placeholder sugar-like SMILES — replace
          statement=("Kifunensine inhibits the ER mannosidase EDEM1, slowing "
@@ -62,6 +66,7 @@ GOLD_BINDING: list[dict] = [
                     "EDEM1 specifically is plausible but less direct.")),
 
     dict(tier="C", gene="p97/VCP", drug="aspirin", label="p97_aspirin",
+         uniprot_gene="VCP",
          protein="MELE_PLACEHOLDER_p97",
          ligand_smiles="CC(=O)Oc1ccccc1C(=O)O",    # aspirin — a mismatch control
          statement=("Aspirin inhibits the p97/VCP motor and re-imposes "
@@ -70,6 +75,7 @@ GOLD_BINDING: list[dict] = [
                     "should score as a weak/no binder.")),
 
     dict(tier="C", gene="proteasome 20S", drug="caffeine", label="psmb5_caffeine",
+         uniprot_gene="PSMB5",
          protein="MELE_PLACEHOLDER_PSMB5",
          ligand_smiles="Cn1cnc2c1c(=O)n(C)c(=O)n2C",  # caffeine — mismatch control
          statement=("Caffeine binds the 20S proteasome β5 subunit and blocks "
@@ -82,8 +88,27 @@ GOLD_BINDING: list[dict] = [
 GOLD_BINDING_RANK = {i: i for i in range(len(GOLD_BINDING))}
 
 
+def _real_seqs() -> dict:
+    """Load real UniProt sequences if fetch_uniprot.py has produced them."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "real_binding_seqs.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
 def binding_targets():
-    """Build co_scientist.boltz_scorer.BoltzTarget objects for scoring."""
+    """Build co_scientist.boltz_scorer.BoltzTarget objects for scoring.
+
+    Uses real UniProt sequences from real_binding_seqs.json when present
+    (run `python -m benchmark.fetch_uniprot`); otherwise the placeholders above.
+    """
     from co_scientist.boltz_scorer import BoltzTarget
-    return [BoltzTarget(protein=g["protein"], ligand_smiles=g["ligand_smiles"],
-                        label=g["label"]) for g in GOLD_BINDING]
+    real = _real_seqs()
+    return [BoltzTarget(protein=real.get(g["label"], g["protein"]),
+                        ligand_smiles=g["ligand_smiles"], label=g["label"])
+            for g in GOLD_BINDING]
