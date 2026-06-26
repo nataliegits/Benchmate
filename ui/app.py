@@ -196,11 +196,10 @@ with st.sidebar:
 # ────────────────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "New perturbation",
     "Inspect cache",
     "Run Benchmate",
-    "Hermes preview",
     "Benchmark",
     "Cross-check with other models",
 ])
@@ -413,103 +412,6 @@ with tab3:
 
 # ── Tab 4 ────────────────────────────────────────────────────
 with tab4:
-    st.header("Hermes preview")
-    st.write(
-        "Hermes is an autonomous agent (hermes-agent.nousresearch.com) that "
-        "runs on a server and accepts messages from Slack, Discord, "
-        "Telegram, email, or the CLI. When wired to Benchmate, it calls the "
-        "JSON-in / JSON-out functions previewed below."
-    )
-    st.caption(
-        "This tab shows the inputs and outputs of those functions so you "
-        "can validate the integration before deploying Hermes. Full "
-        "deployment guide: HERMES.md."
-    )
-
-    from hermes.benchmate_runner import (
-        list_cache as hermes_list_cache,
-        gene_neighbors as hermes_neighbors,
-        add_perturbation as hermes_add,
-    )
-
-    with st.container(border=True):
-        st.markdown("**list_cache()** — what genes are in the cache?")
-        st.caption("Chat equivalent: \"hermes, what perturbations do we have cached?\"")
-        if st.button("Run list_cache", key="hermes_list"):
-            result = hermes_list_cache()
-            st.code(json.dumps(result, indent=2), language="json")
-
-    with st.container(border=True):
-        st.markdown("**gene_neighbors(symbol, top_n)** — top affected genes for a knockout")
-        st.caption("Chat equivalent: \"hermes, what does TXNDC15 knockout shift downstream?\"")
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            sym = st.selectbox("Gene", cached or ["(no cached genes)"],
-                               key="hermes_neighbors_gene")
-        with col_b:
-            top_n = st.number_input("Top N", 3, 30, 5,
-                                    key="hermes_neighbors_top_n")
-        if st.button("Run gene_neighbors", key="hermes_neighbors_btn"):
-            if cached:
-                result = hermes_neighbors(sym, top_n=int(top_n))
-                st.code(json.dumps(result, indent=2, default=str),
-                        language="json")
-            else:
-                st.warning("No cached genes — upload some CSVs first.")
-
-    with st.container(border=True):
-        st.markdown("**add_perturbation(symbols, cell_context)** — generate a Colab notebook")
-        st.caption("Chat equivalent: \"hermes, add FOXP3 to the perturbation queue in plasma cells.\"")
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            new_genes = st.text_input("Gene symbols (comma-separated)",
-                                      value="FOXP3", key="hermes_add_genes")
-        with col_b:
-            new_ctx = st.selectbox("Cell context",
-                                   list(CELL_TYPE_PRESETS.keys()),
-                                   index=2,
-                                   key="hermes_add_ctx")
-        if st.button("Run add_perturbation", key="hermes_add_btn"):
-            syms = [g.strip().upper() for g in new_genes.split(",") if g.strip()]
-            result = hermes_add(syms, cell_context=new_ctx)
-            st.code(json.dumps(result, indent=2, default=str), language="json")
-
-    with st.container(border=True):
-        st.markdown("**run_benchmate(goal, max_iterations)** — execute the full agent loop")
-        st.caption("Chat equivalent: \"hermes, run benchmate on this goal: ...\"")
-        st.info(
-            "This call costs API credits (roughly $0.30–$3 depending on "
-            "iterations). Use the Run Benchmate tab for live runs. The "
-            "JSON shape Hermes receives is:"
-        )
-        st.code(json.dumps({
-            "iterations_run": 8,
-            "n_hypotheses": 24,
-            "top_hypotheses": [
-                {
-                    "elo": 1287.4,
-                    "statement": "TXNDC15 is an ER-luminal thioredoxin...",
-                    "rationale": "The Geneformer KO signature for...",
-                    "experiment": "1) MAM FRACTIONATION WITH POSITIVE...",
-                    "matches_played": 6,
-                    "generation": 1,
-                },
-                "... up to 5 hypotheses ranked by Elo ..."
-            ],
-        }, indent=2), language="json")
-
-    st.divider()
-    st.markdown(
-        "### Wire Hermes to Slack\n"
-        "All four functions also run as CLI commands "
-        "(`python -m hermes.benchmate_runner list-cache`). To make them "
-        "chat-driven, deploy Hermes on a small VPS and register a skill "
-        "that wraps the CLI. The full guide is in "
-        "[HERMES.md](https://github.com/nataliegits/Benchmate/blob/main/HERMES.md)."
-    )
-
-# ── Tab 5 ────────────────────────────────────────────────────
-with tab5:
     st.header("Is the Elo leaderboard trustworthy?")
     st.write(
         "The simulator replays Benchmate's **real** `elo.py` against synthetic "
@@ -1065,8 +967,8 @@ with tab5:
         "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
 
-# ── Tab 6 — Cross-check with other models ─────────────────────
-with tab6:
+# ── Tab 5 — Cross-check with other models ─────────────────────
+with tab5:
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
