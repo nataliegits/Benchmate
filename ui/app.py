@@ -1110,3 +1110,61 @@ with tab5:
             if elo is not None:
                 _show_correlation(elo, score, labels, src,
                                   "elo_vs_boltz", "Boltz score")
+
+    # ----- generic gene/variant judges (Open Targets, DepMap, AlphaMissense) -----
+    def _simple_panel(title, desc, default_path, save_key, up_key, btn_key,
+                      score_col, setup_md=None):
+        with st.container(border=True):
+            st.markdown(f"**{title}** — {desc}")
+            _show_saved(save_key)
+            if setup_md:
+                with st.expander("How to produce these scores"):
+                    st.markdown(setup_md)
+            up = st.file_uploader(f"Drop {default_path.split('/')[-1]}",
+                                  type=["json"], key=up_key)
+            if st.button(f"Show {title} correlation", key=btn_key):
+                import json
+                elo = score = labels = None; src = ""
+                if up is not None:
+                    data = json.load(up)
+                    if isinstance(data, list):
+                        elo = [float(r["elo"]) for r in data]
+                        score = [float(r["score"]) for r in data]
+                        labels = [str(r.get("label", i)) for i, r in enumerate(data)]
+                        src = f"uploaded {default_path.split('/')[-1]}"
+                    else:
+                        st.warning("Upload a merged list of {label, elo, score}.")
+                elif os.path.exists(default_path):
+                    elo, score, labels = _load(default_path); src = f"`{default_path}`"
+                else:
+                    st.info("No scores file yet — see the setup steps above.")
+                if elo is not None:
+                    _show_correlation(elo, score, labels, src, save_key, score_col)
+
+    _simple_panel(
+        "Open Targets — disease association",
+        "*is this gene genuinely linked to the disease?* (genetics + literature + drugs). "
+        "Free, no key.",
+        "benchmark/opentargets_scores.json", "elo_vs_opentargets",
+        "ot_up", "ot_btn", "association",
+        "Run `python -m benchmark.build_target_scores` (needs your Anthropic key; "
+        "Open Targets is a free API). It writes `opentargets_scores.json`.")
+
+    _simple_panel(
+        "DepMap — gene dependency",
+        "*is this gene actually essential in the disease's cancer cell lines?*",
+        "benchmark/depmap_scores.json", "elo_vs_depmap",
+        "dm_up", "dm_btn", "dependency",
+        "Download `CRISPRGeneEffect.csv` from [depmap.org]"
+        "(https://depmap.org/portal/data_page/) into `data/depmap/`, then run "
+        "`python -m benchmark.build_target_scores`.")
+
+    _simple_panel(
+        "AlphaMissense — variant pathogenicity",
+        "*is a coding variant likely pathogenic?* (free, via Ensembl VEP). "
+        "Scores missense variants — supply real ones.",
+        "benchmark/alphamissense_scores.json", "elo_vs_alphamissense",
+        "am_up", "am_btn", "pathogenicity",
+        "Score real missense variants with "
+        "`co_scientist/target_scorer.alphamissense_score(chrom, pos, ref, alt)`, "
+        "save `benchmark/alphamissense_scores.json` as `[{label, elo, score}, ...]`.")

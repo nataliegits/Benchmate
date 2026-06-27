@@ -12,9 +12,10 @@ On top of that, Benchmate adds two evaluation layers beyond the LLM judge: a
 **structured-knowledge layer** (OntoMCP) that grounds the judge in canonical
 biology, and a **"cross-check with other models" panel** that scores hypotheses
 with independent quantitative models — **AlphaGenome** (regulatory effect from
-DNA) and **Boltz** (structure & binding). The idea: a trustworthy co-scientist
-needs a *panel of judges* — semantic, structured, and quantitative — each
-catching what the others miss.
+DNA), **Boltz** (structure & binding), **Open Targets** (gene↔disease
+association), **DepMap** (gene dependency), and **AlphaMissense** (variant
+pathogenicity). The idea: a trustworthy co-scientist needs a *panel of judges* —
+semantic, structured, and quantitative — each catching what the others miss.
 
 Try it: **[benchmate.streamlit.app](https://benchmate.streamlit.app)**
 
@@ -38,7 +39,8 @@ Benchmate/
 │   ├── ontology.py         # OntoMCP grounding: canonical ontology terms fed to
 │   │                       # the judge + Generation/Reflection/Proximity/Supervisor
 │   ├── variant_scorer.py   # AlphaGenome / Enformer — regulatory-effect scoring
-│   └── boltz_scorer.py     # Boltz API — structure & binding scoring
+│   ├── boltz_scorer.py     # Boltz API — structure & binding scoring
+│   └── target_scorer.py    # Open Targets + DepMap + AlphaMissense scorers
 ├── benchmark/              # Is the leaderboard trustworthy + how does it cross-check?
 │   ├── simulate.py         # free Monte Carlo over the real elo.py
 │   ├── metrics.py          # Spearman, top-k, churn, transitivity
@@ -49,7 +51,8 @@ Benchmate/
 │   ├── run_adversarial.py        # ontology discrimination test
 │   ├── alias_dedup.py            # ontology vs text similarity (identity)
 │   ├── gold_set_variants.py · fetch_eqtls.py · build_variant_scores.py  # AlphaGenome
-│   ├── gold_set_binding.py · build_boltz_scores.py   # Boltz binding cross-check
+│   ├── gold_set_binding.py · fetch_uniprot.py · build_boltz_scores.py   # Boltz binding cross-check
+│   ├── gold_set_genes.py · build_target_scores.py    # Open Targets / DepMap gene cross-check
 │   ├── elo_vs_variant_score.py   # Elo vs an independent quantitative score
 │   ├── results.py          # saves runs so the hosted app can display them
 │   ├── run_benchmark.py    # CLI: simulate | judge-eval | validate | compare [--ontology]
@@ -107,9 +110,10 @@ Opens at `http://localhost:8501`. Six tabs:
    the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
    grounding compare, and the discrimination + alias-dedup tests.
 6. **Cross-check with other models.** Correlate the Elo ranking against
-   independent quantitative models — AlphaGenome (regulatory) and Boltz
-   (binding). Low correlation flags hypotheses the leaderboard alone
-   shouldn't pick for the bench.
+   independent quantitative models — AlphaGenome (regulatory), Boltz
+   (binding), Open Targets (association), DepMap (dependency), and
+   AlphaMissense (pathogenicity). Low correlation flags hypotheses the
+   leaderboard alone shouldn't pick for the bench.
 
 ## The Geneformer integration
 
@@ -190,10 +194,14 @@ models"** Streamlit tab and in `benchmark/elo_vs_variant_score.py`.
 |---|---|---|---|
 | **AlphaGenome** | does a *variant* change expression? | `co_scientist/variant_scorer.py` | free key, score in Colab (needs Py 3.10+) |
 | **Boltz** | does a *molecule* bind the target? | `co_scientist/boltz_scorer.py` | plain API, $100 launch credits (`BOLTZLAUNCH`) |
+| **Open Targets** | is the *gene* linked to the disease? | `co_scientist/target_scorer.py` | free GraphQL, no key |
+| **DepMap** | is the *gene* a real dependency? | `co_scientist/target_scorer.py` | public `CRISPRGeneEffect.csv` |
+| **AlphaMissense** | is a *coding variant* pathogenic? | `co_scientist/target_scorer.py` | free, via Ensembl VEP |
 
 Each follows the same recipe: frame the hypotheses the model can score (regulatory
-variants for AlphaGenome, protein+ligand pairs for Boltz), score them, and
-correlate against the Elo ranking.
+variants for AlphaGenome, protein+ligand pairs for Boltz, genes for Open Targets /
+DepMap, coding variants for AlphaMissense), score them, and correlate against the
+Elo ranking.
 
 ```bash
 # AlphaGenome (regulatory):
@@ -203,15 +211,40 @@ python -m benchmark.build_variant_scores   # merge Elo + score -> variant_scores
 
 # Boltz (binding):
 export BOLTZ_API_KEY=...                    # api.boltz.bio (redeem BOLTZLAUNCH)
+python -m benchmark.fetch_uniprot           # real UniProt sequences for the gold set
 python -m benchmark.build_boltz_scores      # score + merge -> boltz_scores.json
 
-# see either correlation:
-python -m benchmark.elo_vs_variant_score --scores benchmark/boltz_scores.json
+# Open Targets (free) + DepMap (needs data/depmap/CRISPRGeneEffect.csv):
+python -m benchmark.build_target_scores     # -> opentargets_scores.json, depmap_scores.json
+
+# see any correlation:
+python -m benchmark.elo_vs_variant_score --scores benchmark/opentargets_scores.json
 ```
 
-The gold sets (`gold_set_variants.py`, `gold_set_binding.py`) ship with
-**placeholder coordinates/sequences** — drop in real ones before trusting a
-number. Both scorers are fail-soft: no API key → no score, never a crash.
+The gold sets (`gold_set_variants.py`, `gold_set_binding.py`, `gold_set_genes.py`)
+ship with a deliberate negative control and **placeholder coordinates** where real
+data isn't fetched automatically — `fetch_uniprot.py` pulls real protein sequences,
+and Open Targets resolves gene/disease IDs by name at query time. Every scorer is
+fail-soft: no key / no data → no score, never a crash.
+
+### What the panel found (ERAD / bortezomib-resistant myeloma gold set)
+
+Three independent judges, each scoring a different axis, all **disagree** with the
+LLM Elo ranking — the point of having a panel:
+
+| Judge | Axis | Spearman(Elo, model) |
+|---|---|---|
+| **AlphaGenome** | regulatory effect | **−0.60** |
+| **Boltz** | binding confidence | **+0.26** |
+| **Open Targets** | disease association | **−0.06** |
+
+The Open Targets result is the sharpest: a near-perfect inversion. The LLM judge
+tops the *elaborate* ERAD genes (SYVN1/HRD1, SEL1L, EDEM1); Open Targets' real-world
+evidence backs the *proven* drug target (PSMB5, the bottom of the Elo list). The
+negative control (OR2T1, an unrelated olfactory receptor) sits last in both — the
+sanity check that the disagreement is signal, not noise. n is small (6 per set), so
+these are flags to investigate, not verdicts — exactly how a panel of judges should
+be read.
 
 ## Benchmarking the Elo tournament
 
