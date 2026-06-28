@@ -88,33 +88,71 @@ def _clinsig_of(rec: dict) -> str:
     return ""
 
 
-def _variants_for(client, gene: str, clinsig: str, per_class: int) -> list[dict]:
-    """clinsig is 'pathogenic' or 'benign' — used both in the query and as the label."""
-    term = (f'{gene}[gene] AND "missense variant"[molecular consequence] '
-            f'AND "single nucleotide variant"[Type of variation] '
-            f'AND "clinsig {clinsig}"[Properties] AND "GRCh38"[Assembly]')
-    uids = _esearch(client, term, retmax=per_class * 4)   # over-fetch; many lack clean SPDI
+_AA3 = {"Ala", "Arg", "Asn", "Asp", "Cys", "Gln", "Glu", "Gly", "His", "Ile",
+        "Leu", "Lys", "Met", "Phe", "Pro", "Ser", "Thr", "Trp", "Tyr", "Val"}
+
+
+def _is_missense(name: str) -> bool:
+    """Decide missense from the variant title's protein change, e.g.
+    '...(p.Arg175His)'. A clean amino-acid substitution between two standard
+    residues, excluding synonymous (=), nonsense (Ter/*), and indels (fs/del/ins/dup)."""
+    import re
+    if not name:
+        return False
+    low = name.lower()
+    if any(x in low for x in ("fs", "del", "ins", "dup", "ter", "*", "=")):
+        return False
+    m = re.search(r"p\.\(?([A-Z][a-z]{2})\d+([A-Z][a-z]{2})\)?", name)
+    if not m:
+        return False
+    a, b = m.group(1), m.group(2)
+    return a in _AA3 and b in _AA3 and a != b
+
+
+def _variants_for(client, gene: str, clinsig: str, per_class: int, debug: bool) -> list[dict]:
+    """Query broadly (gene + clinical significance), then decide missense + SNV in
+    Python from each record — far more robust than relying on every esearch field
+    tag. clinsig is 'pathogenic' or 'benign'."""
+    # primary: gene + significance property. fallback: gene only (filter sig later).
+    term = f'{gene}[gene] AND "clinsig {clinsig}"[Properties]'
+    uids = _esearch(client, term, retmax=max(per_class * 20, 40))
     time.sleep(0.34)
+    if not uids:
+        if debug:
+            print(f"    [{gene}/{clinsig}] 0 uids for property query; falling back to gene-only")
+        uids = _esearch(client, f"{gene}[gene]", retmax=120)
+        time.sleep(0.34)
+    if debug:
+        print(f"    [{gene}/{clinsig}] {len(uids)} candidate uids")
     result = _esummary(client, uids)
     time.sleep(0.34)
     out = []
     for uid in uids:
         rec = result.get(uid) or {}
         vset = (rec.get("variation_set") or [{}])[0]
+        name = vset.get("variation_name") or rec.get("title") or ""
         coords = _spdi_to_coords(vset.get("canonical_spdi") or "")
         sig = _clinsig_of(rec)
-        # keep only records whose own classification agrees (avoid conflicting/VUS)
-        if not coords or clinsig not in sig or "conflicting" in sig:
+        if not coords or not _is_missense(name):
+            continue
+        if "conflicting" in sig:
+            continue
+        if clinsig not in sig:          # require the record's own classification to agree
             continue
         chrom, pos, ref, alt = coords
         out.append(dict(gene=gene, clinsig=clinsig, chrom=chrom, pos=pos,
-                        ref=ref, alt=alt, name=vset.get("variation_name", "")))
+                        ref=ref, alt=alt, name=name))
         if len(out) >= per_class:
             break
+    if debug and not out:
+        sample = next((result.get(u) or {} for u in uids), {})
+        vs = (sample.get("variation_set") or [{}])[0]
+        print(f"    [{gene}/{clinsig}] kept 0. sample title={sample.get('title','')!r} "
+              f"spdi={vs.get('canonical_spdi','')!r} clinsig={_clinsig_of(sample)!r}")
     return out
 
 
-def fetch(genes: list[str], per_class: int) -> list[dict]:
+def fetch(genes: list[str], per_class: int, debug: bool = False) -> list[dict]:
     import httpx
     rows: list[dict] = []
     with httpx.Client(timeout=30.0, headers={"User-Agent": "benchmate/1.0"}) as client:
@@ -122,7 +160,7 @@ def fetch(genes: list[str], per_class: int) -> list[dict]:
             got = []
             for clinsig in ("pathogenic", "benign"):
                 try:
-                    v = _variants_for(client, gene, clinsig, per_class)
+                    v = _variants_for(client, gene, clinsig, per_class, debug)
                 except Exception as e:
                     print(f"  {gene} ({clinsig}): error {e}")
                     v = []
@@ -140,10 +178,12 @@ def main():
                     help="comma-separated gene symbols")
     ap.add_argument("--per-class", type=int, default=2,
                     help="max pathogenic and max benign per gene")
+    ap.add_argument("--debug", action="store_true",
+                    help="print uid counts and a sample record when nothing is kept")
     args = ap.parse_args()
     genes = [g.strip() for g in args.genes.split(",") if g.strip()]
     print(f"Fetching ClinVar missense variants for: {', '.join(genes)}")
-    rows = fetch(genes, args.per_class)
+    rows = fetch(genes, args.per_class, args.debug)
     OUT.write_text(json.dumps(rows, indent=2))
     print(f"\n-> wrote {OUT.name} ({len(rows)} variants: "
           f"{sum(r['clinsig']=='pathogenic' for r in rows)} pathogenic, "

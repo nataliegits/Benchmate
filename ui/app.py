@@ -196,13 +196,132 @@ with st.sidebar:
 # ────────────────────────────────────────────────────────────
 # Tabs
 # ────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+DEFAULT_GOAL = (
+    "Generate testable hypotheses for how TXNDC15 couples ERAD to "
+    "mitophagy in human cells. Use SYVN1 and MARCHF6 as known-comparator "
+    "ERAD E3 ligases. Prioritise experiments feasible in HEK293 or "
+    "HepG2 with standard proteostasis tools (CCCP, thapsigargin, "
+    "tunicamycin, cycloheximide, co-IP, immunoblotting)."
+)
+_PRESET_KEYS = list(CELL_TYPE_PRESETS.keys())
+# Defaults for the inputs the "Start here" tab pre-fills in the other tabs.
+st.session_state.setdefault("genes_in", "")
+st.session_state.setdefault("preset_name", _PRESET_KEYS[0])
+st.session_state.setdefault("goal", DEFAULT_GOAL)
+st.session_state.setdefault("run_iterations", 8)
+st.session_state.setdefault("sh_plan", None)
+
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Start here",
     "New perturbation",
     "Inspect cache",
     "Run Benchmate",
     "Benchmark",
     "Cross-check with other models",
 ])
+
+# ── Tab 0 — guided flow ──────────────────────────────────────
+with tab0:
+    st.header("Start here — from question to cross-checked hypotheses")
+    st.write(
+        "Type a research question. Benchmate reads it and lays out the exact "
+        "steps: which genes to perturb, in which cell type, and which models "
+        "to cross-check the winning hypotheses against."
+    )
+
+    st.session_state.setdefault(
+        "sh_question",
+        "What ERAD genes drive bortezomib resistance in multiple myeloma?",
+    )
+    question = st.text_area("Your research question", key="sh_question", height=90)
+
+    have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if not have_key:
+        st.info("Add your Anthropic API key in the sidebar to build a plan.")
+
+    if st.button("Build my plan", type="primary", disabled=not have_key):
+        from co_scientist.llm import call_json
+        presets = list(CELL_TYPE_PRESETS.keys())
+        prompt = (
+            "You are planning a Benchmate run for a biomedical research "
+            "question. Decide:\n"
+            "1. perturb_genes: 2-4 human gene SYMBOLS most worth perturbing "
+            "to generate evidence for this question.\n"
+            f"2. cell_context: choose EXACTLY one string from this list: "
+            f"{presets}.\n"
+            "3. cell_reason: <=15 words on why that cell context fits.\n"
+            "4. iterations: an integer 4-16 for the tournament size.\n"
+            "5. cross_check: 2-4 items, each an object with keys target (a "
+            "gene or protein symbol the hypotheses will likely center on), "
+            "model (EXACTLY one of: AlphaGenome, Boltz, Open Targets, DepMap, "
+            "AlphaMissense), and reason (<=10 words). Match the model to the "
+            "target: Open Targets/DepMap for gene-disease questions, Boltz for "
+            "drug-target binding, AlphaGenome for regulatory variants, "
+            "AlphaMissense for coding variants.\n\n"
+            f"Question: {question}"
+        )
+        try:
+            with st.spinner("Reading your question…"):
+                plan = call_json(prompt, role="generation", max_tokens=900)
+            if plan.get("cell_context") not in CELL_TYPE_PRESETS:
+                plan["cell_context"] = presets[0]
+            st.session_state.sh_plan = plan
+        except Exception as e:
+            st.error(f"Could not build a plan: {e}")
+
+    plan = st.session_state.get("sh_plan")
+    if plan:
+        genes = [str(g).upper() for g in plan.get("perturb_genes", []) if str(g).strip()]
+        cell = plan.get("cell_context", _PRESET_KEYS[0])
+        iters = max(4, min(16, int(plan.get("iterations", 8) or 8)))
+        xchecks = plan.get("cross_check", []) or []
+
+        st.divider()
+        st.caption("Your path — three steps. Each fills the right tab for you.")
+
+        with st.container(border=True):
+            st.markdown("**1 · Generate your evidence**  —  New perturbation tab")
+            st.markdown(
+                f"Perturb **{', '.join(genes) or '—'}** in **{cell}**, "
+                "then download and run the notebook."
+            )
+            if plan.get("cell_reason"):
+                st.caption(f"Why this cell context: {plan['cell_reason']}")
+            if st.button("Prefill the New perturbation tab", key="sh_fill1"):
+                st.session_state.genes_in = ", ".join(genes)
+                st.session_state.preset_name = cell
+                st.success("Filled. Open the New perturbation tab above.")
+
+        with st.container(border=True):
+            st.markdown("**2 · Generate & rank hypotheses**  —  Run Benchmate tab")
+            st.markdown(
+                f"Run **{iters} iterations** on your question — the agents "
+                "propose hypotheses and rank them by Elo."
+            )
+            if st.button("Prefill the Run Benchmate tab", key="sh_fill2"):
+                st.session_state.goal = question
+                st.session_state.run_iterations = iters
+                st.success("Filled. Open the Run Benchmate tab above.")
+
+        with st.container(border=True):
+            st.markdown("**3 · Cross-check the winners**  —  Cross-check tab")
+            if xchecks:
+                for x in xchecks:
+                    st.markdown(
+                        f"- **{str(x.get('target', '?')).upper()}** → "
+                        f"*{x.get('model', '?')}*  ({x.get('reason', '')})"
+                    )
+            else:
+                st.markdown("Score your top genes/proteins against the panel.")
+            st.caption("Low agreement with the Elo ranking = a flag before the bench.")
+            st.session_state.sh_crosscheck = xchecks
+
+        if st.button("Prefill steps 1 & 2", key="sh_fill_all"):
+            st.session_state.genes_in = ", ".join(genes)
+            st.session_state.preset_name = cell
+            st.session_state.goal = question
+            st.session_state.run_iterations = iters
+            st.success("Both tabs filled. Work through them top to bottom.")
 
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
@@ -217,15 +336,18 @@ with tab1:
         genes_in = st.text_input(
             "Gene symbols (comma-separated)",
             placeholder="e.g. XBP1, ATF4, EIF2AK3",
+            key="genes_in",
         )
     with col2:
         preset_name = st.selectbox(
             "Cell context",
-            list(CELL_TYPE_PRESETS.keys()),
-            index=0,
+            _PRESET_KEYS,
+            key="preset_name",
             help="The cells Geneformer will perturb your genes in. "
                  "Pick where your genes' biology should be readable.",
         )
+    if st.session_state.get("sh_plan"):
+        st.caption("Tip: the Start here tab can fill these in from a question.")
     st.caption(CELL_TYPE_PRESETS[preset_name]["rationale"])
 
     if st.button("Generate Colab notebook", type="primary"):
@@ -307,15 +429,9 @@ with tab3:
     goal = st.text_area(
         "Research goal",
         height=140,
-        value=(
-            "Generate testable hypotheses for how TXNDC15 couples ERAD to "
-            "mitophagy in human cells. Use SYVN1 and MARCHF6 as known-comparator "
-            "ERAD E3 ligases. Prioritise experiments feasible in HEK293 or "
-            "HepG2 with standard proteostasis tools (CCCP, thapsigargin, "
-            "tunicamycin, cycloheximide, co-IP, immunoblotting)."
-        ),
+        key="goal",
     )
-    iterations = st.slider("Max iterations", 4, 16, 8)
+    iterations = st.slider("Max iterations", 4, 16, key="run_iterations")
     cost_estimate = 0.30 * iterations / 4
     st.caption(f"Estimated Anthropic spend: ~${cost_estimate:.2f} "
                f"({iterations} iterations).")
@@ -1011,6 +1127,15 @@ with tab5:
         "models** — each scoring a hypothesis from a completely different angle. "
         "Low correlation = a flag. This is the *panel of judges*."
     )
+
+    _sh_xc = st.session_state.get("sh_crosscheck")
+    if _sh_xc:
+        lines = "\n".join(
+            f"- **{str(x.get('target', '?')).upper()}** → "
+            f"*{x.get('model', '?')}* ({x.get('reason', '')})"
+            for x in _sh_xc
+        )
+        st.info("From your Start here plan, check these:\n\n" + lines)
 
     # ----- AlphaGenome: regulatory / expression -----
     with st.container(border=True):

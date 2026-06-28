@@ -1,0 +1,47 @@
+[
+  {
+    "gene": "TP53",
+    "clinsig": "pathogenic",
+    "chrom": "17",
+    "pos": 7674246,
+    "ref": "G",
+    "alt": "T",
+    "name": "NM_000546.6(TP53):c.717C>A (p.Asn239Lys)"
+  },
+  {
+    "gene": "VCP",
+    "clinsig": "pathogenic",
+    "chrom": "9",
+    "pos": 35063005,
+    "ref": "T",
+    "alt": "C",
+    "name": "NM_007126.5(VCP):c.784A>G (p.Thr262Ala)"
+  },
+  {
+    "gene": "VCP",
+    "clinsig": "pathogenic",
+    "chrom": "9",
+    "pos": 35066710,
+    "ref": "G",
+    "alt": "A",
+    "name": "NM_007126.5(VCP):c.410C>T (p.Pro137Leu)"
+  },
+  {
+    "gene": "BRCA1",
+    "clinsig": "benign",
+    "chrom": "17",
+    "pos": 43092890,
+    "ref": "C",
+    "alt": "G",
+    "name": "NM_007294.4(BRCA1):c.2641G>C (p.Glu881Gln)"
+  },
+  {
+    "gene": "BRCA1",
+    "clinsig": "benign",
+    "chrom": "17",
+    "pos": 43094636,
+    "ref": "C",
+    "alt": "A",
+    "name": "NM_007294.4(BRCA1):c.895G>T (p.Val299Leu)"
+  }
+]

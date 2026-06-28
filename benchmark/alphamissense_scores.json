@@ -1,0 +1,32 @@
+[
+  {
+    "label": "TP53_17-7674246G>T",
+    "elo": 1200.0,
+    "score": 0.9959,
+    "clinsig": "pathogenic"
+  },
+  {
+    "label": "VCP_9-35063005T>C",
+    "elo": 1200.0,
+    "score": 0.8358,
+    "clinsig": "pathogenic"
+  },
+  {
+    "label": "VCP_9-35066710G>A",
+    "elo": 1200.0,
+    "score": 0.9633,
+    "clinsig": "pathogenic"
+  },
+  {
+    "label": "BRCA1_17-43092890C>G",
+    "elo": 1200.0,
+    "score": 0.1103,
+    "clinsig": "benign"
+  },
+  {
+    "label": "BRCA1_17-43094636C>A",
+    "elo": 1200.0,
+    "score": 0.3488,
+    "clinsig": "benign"
+  }
+]

@@ -27,6 +27,7 @@ check_geneformer.py
 
 # Local-only user data
 data/geneformer/*.csv
+data/depmap/*.csv
 *.pdf
 
 # Internal-only docs / decks / images (keep off GitHub)

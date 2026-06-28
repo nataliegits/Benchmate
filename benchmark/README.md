@@ -120,13 +120,23 @@ LLM Elo ranking — which is the point of running a panel rather than one judge:
 | **AlphaGenome** | regulatory effect | **−0.60** |
 | **Boltz** | binding confidence | **+0.26** |
 | **Open Targets** | disease association | **−0.06** |
+| **DepMap** | gene dependency | **−0.10** |
+| **AlphaMissense** | variant pathogenicity | undefined (calibration +0.70) |
 
-Open Targets is the sharpest: a near-perfect inversion. The LLM judge tops the
-*elaborate* ERAD genes (SYVN1/HRD1, SEL1L, EDEM1); Open Targets' aggregated
-real-world evidence backs the *proven* drug target (PSMB5, near the bottom of the
-Elo list). The negative control (OR2T1, an unrelated olfactory receptor) sits last
-in both — the sanity check that the disagreement is signal, not noise. n is small
-(6 per set), so read these as flags to investigate, not verdicts.
+Open Targets and DepMap show the same near-perfect inversion: the LLM judge tops
+the *elaborate* ERAD genes (SYVN1/HRD1, SEL1L, EDEM1); both external models put the
+*proven* drug target (PSMB5, near the bottom of the Elo list) on top — Open Targets
+by disease evidence, DepMap because the proteasome is an essential dependency. The
+negative control (OR2T1) sits last in Open Targets and isn't in DepMap's CRISPR
+library at all (so DepMap is n=5). n is small throughout, so read these as flags to
+investigate, not verdicts.
+
+AlphaMissense passed its own calibration (mean pathogenicity 0.93 for ClinVar
+pathogenic vs 0.23 for benign — a +0.70 separation) but its Elo correlation is
+*undefined*: the LLM gave all five variant hypotheses the same Elo, so there's
+nothing to correlate. Phrased as "this variant is damaging," they read identically
+to the judge — no LLM signal at the single-variant grain, while AlphaMissense
+separates them cleanly.
 
 The `--ontology` flag injects canonical ontology terms (via OntoMCP) into the
 fair judge's prompt — the structured-knowledge layer in `co_scientist/ontology.py`.
