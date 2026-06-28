@@ -46,8 +46,9 @@ st.markdown(
             letter-spacing: -0.005em;
         }
         h1, h2, h3 {
-            font-family: 'Source Serif 4', Georgia, serif !important;
-            letter-spacing: -0.015em;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif !important;
+            letter-spacing: -0.02em;
             font-weight: 600;
         }
         h1 { font-size: 2.4rem !important; }
@@ -56,14 +57,16 @@ st.markdown(
             font-family: 'JetBrains Mono', 'SF Mono', Menlo,
                          monospace !important;
         }
-        /* Subtle teal accent on primary buttons */
+        /* Monochrome editorial — ink primary buttons */
         .stButton button[kind="primary"] {
-            background-color: #0e7490;
-            border-color: #0e7490;
+            background-color: #111111;
+            border-color: #111111;
+            color: #ffffff;
         }
         .stButton button[kind="primary"]:hover {
-            background-color: #155e75;
-            border-color: #155e75;
+            background-color: #000000;
+            border-color: #000000;
+            color: #ffffff;
         }
     </style>
     """,
@@ -72,13 +75,13 @@ st.markdown(
 
 # Header with a thin accent rule above the title for editorial polish
 st.markdown(
-    "<div style='border-top: 3px solid #0e7490; width: 56px; "
+    "<div style='border-top: 3px solid #111111; width: 56px; "
     "margin-bottom: 8px;'></div>",
     unsafe_allow_html=True,
 )
 st.title("Benchmate")
 st.markdown(
-    "<p style='color:#57534e; font-size:1.05rem; margin-top:-8px; "
+    "<p style='color:#555555; font-size:1.05rem; margin-top:-8px; "
     "font-family: Inter, sans-serif;'>"
     "An AI co-scientist for biomedical hypothesis generation, grounded "
     "in your own perturbation data.</p>",

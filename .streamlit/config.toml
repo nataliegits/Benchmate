@@ -4,9 +4,13 @@ maxUploadSize = 50
 [browser]
 gatherUsageStats = false
 
+# Direction A — monochrome editorial. High-contrast black/white with a single
+# ink accent, to read like a lab notebook / journal rather than the soft
+# beige-and-blue of other research tools.
 [theme]
-primaryColor = "#0e7490"
-backgroundColor = "#fdfcf9"
-secondaryBackgroundColor = "#f4f1ea"
-textColor = "#1c1917"
+base = "light"
+primaryColor = "#111111"              # ink — buttons, sliders, active tab, links
+backgroundColor = "#ffffff"           # page
+secondaryBackgroundColor = "#f4f4f3"  # sidebar, cards, code blocks, table header
+textColor = "#111111"
 font = "sans serif"
