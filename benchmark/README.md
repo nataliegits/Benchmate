@@ -51,6 +51,7 @@ python -m benchmark.elo_vs_variant_score --demo
 | `gold_set_variants.py` · `fetch_eqtls.py` · `build_variant_scores.py` | AlphaGenome cross-check: variant hypotheses, real GTEx eQTLs, and the Elo+score merge |
 | `gold_set_binding.py` · `fetch_uniprot.py` · `build_boltz_scores.py` | **Boltz cross-check**: protein+ligand binding hypotheses, real UniProt sequences, and the Elo+score merge |
 | `gold_set_genes.py` · `build_target_scores.py` | **Open Targets / DepMap cross-check**: gene hypotheses and the Elo+score merge |
+| `fetch_clinvar.py` · `gold_set_missense.py` · `build_missense_scores.py` | **AlphaMissense cross-check**: real ClinVar missense variants, framed as hypotheses, and the Elo+score merge |
 
 ## Cross-check with other models (the "panel of judges")
 
@@ -70,10 +71,25 @@ They all live in the Streamlit **"Cross-check with other models"** tab.
 The gene judges (Open Targets / DepMap) share one gold set + merge step:
 
 ```bash
-# Open Targets (free) + DepMap (needs data/depmap/CRISPRGeneEffect.csv):
+# Open Targets (free) + DepMap (needs data/depmap/CRISPRGeneEffect.csv; add
+# Model.csv to restrict DepMap to multiple-myeloma cell lines):
 python -m benchmark.build_target_scores       # writes opentargets_scores.json, depmap_scores.json
 python -m benchmark.elo_vs_variant_score --scores benchmark/opentargets_scores.json
 ```
+
+**AlphaMissense** scores *variants*, so it has its own real-data gold set —
+pathogenic + benign missense variants pulled from ClinVar (coordinates read from
+each record's canonical SPDI, never hand-typed):
+
+```bash
+python -m benchmark.fetch_clinvar             # real ClinVar missense variants -> clinvar_missense.json
+python -m benchmark.build_missense_scores     # rank + score (Ensembl VEP) -> alphamissense_scores.json
+python -m benchmark.elo_vs_variant_score --scores benchmark/alphamissense_scores.json
+```
+
+`build_missense_scores` also prints a calibration check (mean AlphaMissense for
+pathogenic vs benign — they should separate), since each variant carries its
+ClinVar answer.
 
 **Boltz quick test** (binding):
 

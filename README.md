@@ -53,6 +53,7 @@ Benchmate/
 │   ├── gold_set_variants.py · fetch_eqtls.py · build_variant_scores.py  # AlphaGenome
 │   ├── gold_set_binding.py · fetch_uniprot.py · build_boltz_scores.py   # Boltz binding cross-check
 │   ├── gold_set_genes.py · build_target_scores.py    # Open Targets / DepMap gene cross-check
+│   ├── fetch_clinvar.py · gold_set_missense.py · build_missense_scores.py  # AlphaMissense cross-check
 │   ├── elo_vs_variant_score.py   # Elo vs an independent quantitative score
 │   ├── results.py          # saves runs so the hosted app can display them
 │   ├── run_benchmark.py    # CLI: simulate | judge-eval | validate | compare [--ontology]
@@ -214,8 +215,13 @@ export BOLTZ_API_KEY=...                    # api.boltz.bio (redeem BOLTZLAUNCH)
 python -m benchmark.fetch_uniprot           # real UniProt sequences for the gold set
 python -m benchmark.build_boltz_scores      # score + merge -> boltz_scores.json
 
-# Open Targets (free) + DepMap (needs data/depmap/CRISPRGeneEffect.csv):
+# Open Targets (free) + DepMap (needs data/depmap/CRISPRGeneEffect.csv; add
+# Model.csv to restrict DepMap to multiple-myeloma cell lines):
 python -m benchmark.build_target_scores     # -> opentargets_scores.json, depmap_scores.json
+
+# AlphaMissense (free, via Ensembl VEP) on real ClinVar variants:
+python -m benchmark.fetch_clinvar           # real pathogenic+benign missense variants
+python -m benchmark.build_missense_scores   # rank + score -> alphamissense_scores.json
 
 # see any correlation:
 python -m benchmark.elo_vs_variant_score --scores benchmark/opentargets_scores.json

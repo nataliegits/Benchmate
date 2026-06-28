@@ -25,9 +25,13 @@ from pathlib import Path
 DEFAULT_DISEASE = "multiple myeloma"
 OT_URL = "https://api.platform.opentargets.org/api/v4/graphql"
 ENSEMBL_VEP = "https://rest.ensembl.org/vep/human/region"
-DEPMAP_CSV = Path(os.environ.get(
-    "DEPMAP_CSV",
-    Path(__file__).resolve().parent.parent / "data" / "depmap" / "CRISPRGeneEffect.csv"))
+_DEPMAP_DIR = Path(__file__).resolve().parent.parent / "data" / "depmap"
+DEPMAP_CSV = Path(os.environ.get("DEPMAP_CSV", _DEPMAP_DIR / "CRISPRGeneEffect.csv"))
+# Optional cell-line metadata. If present, we restrict the dependency score to the
+# disease's own cell lines (e.g. multiple myeloma) instead of pan-cancer. Download
+# Model.csv from the same DepMap data page. Without it we fall back to all lines.
+DEPMAP_MODEL_CSV = Path(os.environ.get("DEPMAP_MODEL_CSV", _DEPMAP_DIR / "Model.csv"))
+DEPMAP_LINEAGE = os.environ.get("DEPMAP_LINEAGE", "myeloma")  # substring, any column
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +99,9 @@ def opentargets_score(symbol: str, disease: str = DEFAULT_DISEASE) -> float | No
 # CRISPR gene-effect matrix. Download `CRISPRGeneEffect.csv` from
 # https://depmap.org/portal/data_page/ into data/depmap/ (or set DEPMAP_CSV).
 # Gene effect is negative when a gene is essential, so we return -mean(effect):
-# higher = more of a dependency.
+# higher = more of a dependency. If Model.csv is also present we average only over
+# the disease's own cell lines (multiple myeloma) — a more on-target dependency
+# than the pan-cancer mean.
 
 def depmap_available() -> bool:
     try:
@@ -105,9 +111,32 @@ def depmap_available() -> bool:
         return False
 
 
+def _myeloma_model_ids() -> set[str] | None:
+    """ModelIDs whose metadata mentions the target lineage (default 'myeloma').
+    Returns None if Model.csv is absent or no rows match — caller falls back to
+    all cell lines. Matches the substring in ANY column, so it's robust to which
+    OncoTree column DepMap uses."""
+    if not DEPMAP_MODEL_CSV.exists():
+        return None
+    try:
+        import pandas as pd
+        m = pd.read_csv(DEPMAP_MODEL_CSV, dtype=str).fillna("")
+        id_col = "ModelID" if "ModelID" in m.columns else m.columns[0]
+        needle = DEPMAP_LINEAGE.lower()
+        text = m.drop(columns=[id_col], errors="ignore").apply(
+            lambda r: " ".join(r.values).lower(), axis=1)
+        ids = set(m.loc[text.str.contains(needle), id_col])
+        return ids or None
+    except Exception as e:
+        print(f"[target_scorer] DepMap Model.csv read failed ({e}); using all lines")
+        return None
+
+
 def depmap_score(symbol: str) -> float | None:
-    """Mean dependency across DepMap cell lines: -mean(gene effect). Higher =
-    more essential. None if the CSV isn't present or the gene isn't found."""
+    """Mean dependency for a gene: -mean(gene effect). Higher = more essential.
+    Restricted to multiple-myeloma cell lines when data/depmap/Model.csv is
+    present, else averaged over all lines. None if the CSV is missing or the gene
+    isn't found."""
     if not depmap_available():
         return None
     try:
@@ -118,7 +147,13 @@ def depmap_score(symbol: str) -> float | None:
                    None)
         if col is None:
             return None
-        return float(-df[col].mean())
+        series = df[col]
+        ids = _myeloma_model_ids()
+        if ids:
+            subset = series[series.index.isin(ids)]
+            if len(subset) >= 3:          # enough lines to mean meaningfully
+                series = subset
+        return float(-series.mean())
     except Exception as e:
         print(f"[target_scorer] DepMap error for {symbol}: {e}")
         return None

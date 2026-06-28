@@ -1157,7 +1157,9 @@ with tab5:
         "dm_up", "dm_btn", "dependency",
         "Download `CRISPRGeneEffect.csv` from [depmap.org]"
         "(https://depmap.org/portal/data_page/) into `data/depmap/`, then run "
-        "`python -m benchmark.build_target_scores`.")
+        "`python -m benchmark.build_target_scores`. **Optional:** also drop "
+        "`Model.csv` there and the score is restricted to multiple-myeloma cell "
+        "lines instead of pan-cancer.")
 
     _simple_panel(
         "AlphaMissense — variant pathogenicity",
@@ -1165,6 +1167,8 @@ with tab5:
         "Scores missense variants — supply real ones.",
         "benchmark/alphamissense_scores.json", "elo_vs_alphamissense",
         "am_up", "am_btn", "pathogenicity",
-        "Score real missense variants with "
-        "`co_scientist/target_scorer.alphamissense_score(chrom, pos, ref, alt)`, "
-        "save `benchmark/alphamissense_scores.json` as `[{label, elo, score}, ...]`.")
+        "1. `python -m benchmark.fetch_clinvar` pulls **real** pathogenic + benign "
+        "missense variants (GRCh38 coords) from ClinVar. 2. "
+        "`python -m benchmark.build_missense_scores` ranks them by Elo, scores each "
+        "with AlphaMissense (free Ensembl VEP), and writes "
+        "`alphamissense_scores.json` — plus a pathogenic-vs-benign calibration check.")
