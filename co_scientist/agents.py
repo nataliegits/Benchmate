@@ -21,6 +21,7 @@ from .tools import (
 from .ontology import (
     ontology_context_for, ontology_similarity, ontology_query_terms,
 )
+from .assay import available_assays, assay_evidence, summarize as _assay_summarize
 
 
 SYSTEM_BASE = (
@@ -64,6 +65,51 @@ def _geneformer_context_for(text: str, top_n: int = 10) -> str:
             + "\n".join(lines)
         )
     return "\n\n".join(blocks)
+
+
+def _assay_keywords(rec: dict) -> set[str]:
+    """Normalised keywords that tie a bench-assay record to hypothesis text:
+    the label parts (e.g. p97, CB5083) and the drug's leading token."""
+    kws = set()
+    for part in re.split(r"[_\W]+", rec.get("hypothesis_label", "")):
+        if len(part) >= 3:
+            kws.add(part.lower().replace("-", ""))
+    m = re.match(r"\s*([A-Za-z0-9\-]{3,})", rec.get("drug", ""))
+    if m:
+        kws.add(m.group(1).lower().replace("-", ""))
+    return kws
+
+
+def _text_has(text: str, kw: str) -> bool:
+    return kw in re.sub(r"[\W_]+", "", text.lower())
+
+
+def _assay_context_for(text: str) -> str:
+    """Cached bench-assay evidence whose drug/target is mentioned in `text`,
+    as a prompt-ready block. Mirrors _geneformer_context_for. Empty if none."""
+    recs = [assay_evidence(l) for l in available_assays()]
+    matched = [r for r in recs
+               if r and any(_text_has(text, k) for k in _assay_keywords(r))]
+    if not matched:
+        return ""
+    return "\n\n".join(_assay_summarize(r) for r in matched)
+
+
+def _assay_bulletin() -> str:
+    """Compact one-line summary of every bench result on record — injected into
+    Generation so new hypotheses account for what the bench has already shown."""
+    recs = [assay_evidence(l) for l in available_assays()]
+    recs = [r for r in recs if r]
+    if not recs:
+        return ""
+    lines = [
+        f"  - {r['hypothesis_label']}: {r['drug']} on {r['cell_line']} → "
+        f"{r['viability']['verdict']} (action: {r['direction_for_benchmate']})"
+        for r in recs
+    ]
+    return ("\n\nBENCH RESULTS ON RECORD — real assay outcomes; weight hypotheses "
+            "accordingly (down-weight ideas the bench has already refuted, and do "
+            "not simply re-propose them):\n" + "\n".join(lines) + "\n")
 
 
 def _ontology_block(text: str) -> str:
@@ -150,6 +196,9 @@ def generation(state: CoScientistState) -> dict[str, Any]:
     # Canonical ontology grounding for the goal's entities.
     onto_block = _ontology_block(goal)
 
+    # Bench results on record — the "learn" arrow of the loop.
+    assay_block = _assay_bulletin()
+
     existing = state.get("hypotheses", [])
     existing_summary = "\n".join(
         f"- {h.statement[:120]}" for h in sorted(existing, key=lambda h: -h.elo)[:5]
@@ -159,7 +208,8 @@ def generation(state: CoScientistState) -> dict[str, Any]:
         f"Research goal: {goal}\n\n"
         f"Relevant literature:\n{lit}"
         f"{gf_block}"
-        f"{onto_block}\n"
+        f"{onto_block}"
+        f"{assay_block}\n"
         f"Existing top hypotheses (do NOT duplicate):\n{existing_summary}\n\n"
         "Propose 3 NOVEL, testable hypotheses that address the goal. For each, "
         "output an object with keys: statement, rationale, experiment, citations "
@@ -191,13 +241,18 @@ def reflection(state: CoScientistState) -> dict[str, Any]:
                     f"is consistent with the predicted affected genes."
                     if gf else "")
         onto_block = _ontology_block(joined)
+        assay = _assay_context_for(joined)
+        assay_block = (f"\n\nBENCH ASSAY EVIDENCE for this hypothesis — weigh it "
+                       f"heavily; a bench result outranks a plausible story:\n{assay}\n"
+                       if assay else "")
         critique = call(
             f"Critically review this hypothesis as a peer reviewer.\n\n"
             f"Statement: {h.statement}\n"
             f"Rationale: {h.rationale}\n"
             f"Proposed experiment: {h.experiment}"
             f"{gf_block}"
-            f"{onto_block}\n\n"
+            f"{onto_block}"
+            f"{assay_block}\n\n"
             "In 4 sentences max, identify: (a) the strongest objection, "
             "(b) whether the experiment as designed could falsify it, "
             "(c) one concrete improvement. If the hypothesis names an entity "

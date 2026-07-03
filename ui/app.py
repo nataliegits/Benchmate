@@ -19,6 +19,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from co_scientist.tools import available_geneformer_genes, geneformer_neighbors
+from co_scientist import assay
 from ui.notebook_gen import generate_notebook, resolve_to_ensembl, CELL_TYPE_PRESETS
 from ui.colab_handoff import handoff, gh_available, GhUnavailable
 from co_scientist.llm_config import model_for, _DEFAULT_ROLE_MODELS
@@ -214,13 +215,14 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Start here",
     "New perturbation",
     "Inspect cache",
     "Run Benchmate",
     "Benchmark",
     "Cross-check with other models",
+    "Bench assay",
 ])
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
@@ -1300,3 +1302,77 @@ with tab5:
         "`python -m benchmark.build_missense_scores` ranks them by Elo, scores each "
         "with AlphaMissense (free Ensembl VEP), and writes "
         "`alphamissense_scores.json` — plus a pathogenic-vs-benign calibration check.")
+
+# ── Tab 6 — Bench assay (close the loop) ─────────────────────
+with tab6:
+    st.header("Bench assay → evidence")
+    st.write(
+        "Upload a run from the alamarBlue rig (columns `t_s, R, G, B, red_blue`). "
+        "Benchmate turns the colour kinetics into a viability readout and files it "
+        "as evidence — so the next run reasons over the bench result, not just the "
+        "literature. This is the *test → learn* edge of the loop."
+    )
+
+    up = st.file_uploader("alamarBlue run CSV", type=["csv"], key="assay_up")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        a_hyp = st.text_input("Hypothesis label", value="p97_CB5083", key="a_hyp",
+                              help="Ties this result to a hypothesis; agents match on it.")
+        a_drug = st.text_input("Drug / treatment", value="CB-5083 (1 uM, 48h)", key="a_drug")
+    with col_b:
+        a_cell = st.text_input("Cell line", value="RPMI-8226, bortezomib-resistant", key="a_cell")
+        a_ctrl = st.number_input("Vehicle-control Δ(red/blue) (optional)",
+                                 value=0.24, min_value=0.0, step=0.01, key="a_ctrl",
+                                 help="Supply the control's reduction Δ to express viability as % of control.")
+
+    if st.button("Ingest assay → evidence", type="primary", disabled=up is None):
+        import tempfile, pandas as pd
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "run.csv"
+        tmp.write_bytes(up.getvalue())
+        try:
+            rec = assay.ingest(tmp, hypothesis=a_hyp.strip() or "assay_run",
+                               drug=a_drug, cell=a_cell,
+                               readout="alamarBlue red/blue reduction kinetics (TCS34725)",
+                               control_delta=a_ctrl or None)
+        except Exception as e:
+            st.error(f"Could not read that CSV: {e}")
+            st.stop()
+
+        m = rec["metrics"]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("baseline", m["baseline"])
+        c2.metric("plateau", m["plateau"])
+        c3.metric("Δ reduction", m["delta"])
+        pct = rec["viability"].get("viability_pct_of_control")
+        c4.metric("viability", f"{pct:.0f}%" if pct is not None else "—")
+
+        rows = assay.read_run(tmp)
+        df = pd.DataFrame(rows).set_index("t_s")[["red_blue"]]
+        st.line_chart(df, height=240)
+
+        verdict = rec["viability"]["verdict"]
+        direction = rec["direction_for_benchmate"]
+        (st.success if direction == "up-weight" else
+         st.warning if direction == "down-weight" else st.info)(
+            f"**{verdict}.** {rec['interpretation']} "
+            f"Suggested action: **{direction}**.")
+        st.caption(f"Saved to `data/rig/{a_hyp.strip()}_assay.json` — "
+                   "the next Benchmate run will factor this in.")
+        with st.expander("Evidence block the agents will read"):
+            st.code(assay.summarize(rec))
+
+    st.divider()
+    on_record = assay.available_assays()
+    if on_record:
+        st.subheader("Bench results on record")
+        for label in on_record:
+            rec = assay.assay_evidence(label)
+            if not rec:
+                continue
+            st.markdown(
+                f"- **{label}** — {rec['drug']} on {rec['cell_line']}: "
+                f"{rec['viability']['verdict']} "
+                f"(*{rec['direction_for_benchmate']}*)"
+            )
+    else:
+        st.caption("No bench results on record yet — ingest a run above.")
