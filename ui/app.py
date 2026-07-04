@@ -215,7 +215,7 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Start here",
     "New perturbation",
     "Inspect cache",
@@ -223,6 +223,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Benchmark",
     "Cross-check with other models",
     "Bench assay",
+    "About",
 ])
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
@@ -1376,3 +1377,31 @@ with tab6:
             )
     else:
         st.caption("No bench results on record yet — ingest a run above.")
+
+# ── Tab 7 — About ────────────────────────────────────────────
+with tab7:
+    st.header("About Benchmate")
+    st.markdown(
+        "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
+        "generation — an independent re-implementation of Google DeepMind's "
+        "AI Co-Scientist. Seven agents propose hypotheses, critique each other, "
+        "and run an Elo tournament; the winners are then cross-checked against a "
+        "panel of independent models and, increasingly, real bench results."
+    )
+    st.markdown(
+        "- **Live app:** [benchmate.streamlit.app](https://benchmate.streamlit.app)\n"
+        "- **Code:** [github.com/nataliegits/Benchmate](https://github.com/nataliegits/Benchmate)\n"
+        "- Built through the Worldwide Studios AI for Science fellowship."
+    )
+
+    st.subheader("Read on Substack")
+    st.markdown(
+        "The build, in order:\n\n"
+        "1. [Building Benchmate, Part 1](https://benchpressed.substack.com/p/building-benchmate-part-1)\n"
+        "2. [Building Benchmate, Part 2](https://benchpressed.substack.com/p/building-benchmate-part-2)\n"
+        "3. [Can you trust an AI scientist's #1 idea?](https://benchpressed.substack.com/p/can-you-trust-an-ai-scientists-1)\n"
+        "4. [Part 3 — What is the AI actually judging?](https://benchpressed.substack.com/p/building-benchmate-part-3-what-is)\n"
+        "5. [Part 4 — A panel of judges](https://benchpressed.substack.com/p/building-benchmate-part-4-a-panel)\n"
+        "6. [Part 5 — Filling out the panel](https://benchpressed.substack.com/p/building-benchmate-part-5-filling)"
+    )
+    st.caption("New posts land at benchpressed.substack.com.")
