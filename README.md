@@ -17,6 +17,12 @@ association), **DepMap** (gene dependency), and **AlphaMissense** (variant
 pathogenicity). The idea: a trustworthy co-scientist needs a *panel of judges* —
 semantic, structured, and quantitative — each catching what the others miss.
 
+The loop now reaches past software, too: results from a DIY **alamarBlue viability
+rig** are ingested as **bench evidence** (`co_scientist/assay.py`), so a real
+wet-lab outcome can move a hypothesis's rank the same way in-silico evidence does —
+think → test → learn. And a guided **Start here** tab turns a plain research
+question into the exact steps to run across the app.
+
 Try it: **[benchmate.streamlit.app](https://benchmate.streamlit.app)**
 
 ## What's in here
@@ -40,7 +46,8 @@ Benchmate/
 │   │                       # the judge + Generation/Reflection/Proximity/Supervisor
 │   ├── variant_scorer.py   # AlphaGenome / Enformer — regulatory-effect scoring
 │   ├── boltz_scorer.py     # Boltz API — structure & binding scoring
-│   └── target_scorer.py    # Open Targets + DepMap + AlphaMissense scorers
+│   ├── target_scorer.py    # Open Targets + DepMap + AlphaMissense scorers
+│   └── assay.py            # alamarBlue rig CSV -> viability -> bench evidence
 ├── benchmark/              # Is the leaderboard trustworthy + how does it cross-check?
 │   ├── simulate.py         # free Monte Carlo over the real elo.py
 │   ├── metrics.py          # Spearman, top-k, churn, transitivity
@@ -63,8 +70,9 @@ Benchmate/
 │   └── 02_geneformer_ciliated_cells.ipynb
 ├── data/geneformer/        # cached perturbation results (CSV, gitignored)
 │   └── README.md           # expected CSV schema
+├── data/rig/               # alamarBlue runs + generated bench-evidence JSON
 ├── ui/                     # Streamlit UI
-│   ├── app.py              # 6-tab Streamlit app
+│   ├── app.py              # 7-tab Streamlit app
 │   ├── notebook_gen.py     # parameterise notebook 02 with user's genes
 │   ├── colab_handoff.py    # push notebook to Gist (API or gh CLI)
 │   └── watcher.py          # optional: Drive sync folder watcher
@@ -92,24 +100,30 @@ checkpointed to `state.json`; resume with `python run.py --resume`.
 streamlit run ui/app.py
 ```
 
-Opens at `http://localhost:8501`. Six tabs:
+Opens at `http://localhost:8501`. Seven tabs:
 
-1. **New perturbation.** Type gene symbols, pick a cell context. Resolves
+1. **Start here.** Type a research question; a small LLM call turns it into a
+   personalised plan — which genes to perturb, in which cell context, and which
+   cross-check models fit — and pre-fills the other tabs for you.
+2. **New perturbation.** Type gene symbols, pick a cell context. Resolves
    to Ensembl IDs via mygene, generates a parameterised copy of
    `notebooks/02_geneformer_ciliated_cells.ipynb` with your genes pre-filled,
    pushes it to a GitHub Gist, returns a one-click "Open in Colab" link.
-2. **Inspect cache.** Browse what's in `data/geneformer/` — pick a gene,
+3. **Inspect cache.** Browse what's in `data/geneformer/` — pick a gene,
    see the top-N affected, sortable.
-3. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
+4. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
    stream into the page. State downloads when finished.
-4. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
+5. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
    the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
    grounding compare, and the discrimination + alias-dedup tests.
-5. **Cross-check with other models.** Correlate the Elo ranking against
+6. **Cross-check with other models.** Correlate the Elo ranking against
    independent quantitative models — AlphaGenome (regulatory), Boltz
    (binding), Open Targets (association), DepMap (dependency), and
    AlphaMissense (pathogenicity). Low correlation flags hypotheses the
    leaderboard alone shouldn't pick for the bench.
+7. **Bench assay.** Upload an alamarBlue rig run (CSV); Benchmate turns the
+   colour kinetics into a viability readout, files it as evidence, and the next
+   run reasons over it. Closes the *test → learn* edge of the loop.
 
 ## The Geneformer integration
 
@@ -255,6 +269,36 @@ a +0.70 separation), but its Elo correlation is *undefined* — the LLM judge ga
 all five variant hypotheses the same Elo. Phrased as "this missense variant is
 damaging," they read identically, so the LLM can't rank them while AlphaMissense
 separates them instantly. Not disagreement, but no LLM signal at the variant grain.
+
+## Closing the loop: bench assays as evidence
+
+Benchmate doesn't only *think* — a wet-lab result can feed back in. A DIY
+alamarBlue viability rig (a Raspberry Pi Pico + a colour sensor + a peristaltic
+pump, ~$60) logs a colour-over-time CSV as live cells reduce resazurin (blue) to
+resorufin (pink). `co_scientist/assay.py` turns that run into evidence:
+
+1. compute the viability metrics (baseline, plateau, Δ reduction, slope, t½),
+2. call it (a big Δ = viable; a flat trace = a kill; a % of a vehicle control),
+3. write a JSON record to `data/rig/<hypothesis>_assay.json` with a
+   `direction_for_benchmate` field (`up-weight` / `down-weight` / `needs-control`).
+
+This mirrors the Geneformer cache, so the agents ingest a bench result the same way
+they read in-silico evidence — via `available_assays()` / `assay_evidence(label)`:
+
+```bash
+python -m co_scientist.assay data/rig/alamarblue_run.csv \
+    --hypothesis p97_CB5083 --drug "CB-5083 (1 uM, 48h)" \
+    --cell "RPMI-8226, bortezomib-resistant" --control-delta 0.24
+```
+
+A live run then uses it two ways: **Generation** and **Reflection** read the
+matching bench evidence in their prompts (a bench result outranks a plausible
+story), and **Ranking** applies a deterministic Elo adjustment after the
+tournament — a refuting assay knocks a hypothesis down (−60), a supporting one
+lifts it (+40), applied once per (hypothesis, assay) pair. Matching is semantic:
+an LLM recognises when a hypothesis hits the same drug/target/mechanism as an
+assay even without the exact name, with a keyword prefilter as a fast free path.
+Upload runs from the **Bench assay** tab, or ingest via the CLI above.
 
 ## Benchmarking the Elo tournament
 
