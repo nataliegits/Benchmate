@@ -84,15 +84,74 @@ def _text_has(text: str, kw: str) -> bool:
     return kw in re.sub(r"[\W_]+", "", text.lower())
 
 
+_ASSAY_MATCH_CACHE: dict[str, list[dict]] = {}
+
+
+def _match_assays(text: str) -> list[dict]:
+    """Bench-assay records that bear on `text`. Keyword prefilter (fast, free)
+    UNION a semantic pass (an LLM decides which results share the drug, target,
+    mechanism, or cell system — catching matches a substring search misses).
+    Cached per text so a run doesn't re-ask. Degrades to keyword-only on error."""
+    if text in _ASSAY_MATCH_CACHE:
+        return _ASSAY_MATCH_CACHE[text]
+    recs = [r for r in (assay_evidence(l) for l in available_assays()) if r]
+    if not recs:
+        _ASSAY_MATCH_CACHE[text] = []
+        return []
+
+    matched = {r["hypothesis_label"]: r
+               for r in recs if any(_text_has(text, k) for k in _assay_keywords(r))}
+    try:
+        listing = "\n".join(
+            f"{i}: {r['drug']} — target/label {r['hypothesis_label']}, "
+            f"{r['cell_line']} ({r['viability']['verdict']})"
+            for i, r in enumerate(recs))
+        out = call_json(
+            f"Hypothesis:\n{text}\n\nBench results on record:\n{listing}\n\n"
+            "Return JSON {\"relevant\": [indices]} listing ONLY the bench results "
+            "that directly bear on this hypothesis — same drug, molecular target, "
+            "mechanism, or cell system. Empty list if none apply.",
+            role="ranking", max_tokens=200, temperature=0.0)
+        for i in out.get("relevant", []):
+            i = int(i)
+            if 0 <= i < len(recs):
+                matched[recs[i]["hypothesis_label"]] = recs[i]
+    except Exception:
+        pass  # keyword matches stand on their own
+
+    result = list(matched.values())
+    _ASSAY_MATCH_CACHE[text] = result
+    return result
+
+
 def _assay_context_for(text: str) -> str:
-    """Cached bench-assay evidence whose drug/target is mentioned in `text`,
-    as a prompt-ready block. Mirrors _geneformer_context_for. Empty if none."""
-    recs = [assay_evidence(l) for l in available_assays()]
-    matched = [r for r in recs
-               if r and any(_text_has(text, k) for k in _assay_keywords(r))]
-    if not matched:
-        return ""
-    return "\n\n".join(_assay_summarize(r) for r in matched)
+    """Matched bench-assay evidence as a prompt-ready block. Empty if none."""
+    matched = _match_assays(text)
+    return "\n\n".join(_assay_summarize(r) for r in matched) if matched else ""
+
+
+# Deterministic Elo nudge from a bench result — a real ranking effect, not just
+# a persuasive prompt. A refuting assay pushes a hypothesis down; a supporting
+# one lifts it. Applied once per (hypothesis, assay) pair — see the marker guard.
+BENCH_ELO_ADJ = {"down-weight": -60.0, "up-weight": 40.0}
+
+
+def apply_bench_adjustments(hypotheses: list) -> list:
+    """After the tournament, shift each hypothesis's Elo by any matching bench
+    result. Idempotent: a `[bench:<label>]` note records that a given assay was
+    already applied, so re-running Ranking each cycle won't compound it."""
+    for h in hypotheses:
+        for r in _match_assays(f"{h.statement} {h.rationale} {h.experiment}"):
+            marker = f"[bench:{r['hypothesis_label']}]"
+            if any(marker in n for n in h.review_notes):
+                continue
+            adj = BENCH_ELO_ADJ.get(r["direction_for_benchmate"], 0.0)
+            if adj:
+                h.elo += adj
+                h.review_notes.append(
+                    f"{marker} Elo {adj:+.0f}: {r['drug']} → "
+                    f"{r['viability']['verdict']} ({r['direction_for_benchmate']}).")
+    return hypotheses
 
 
 def _assay_bulletin() -> str:
@@ -297,6 +356,8 @@ def ranking(state: CoScientistState) -> dict[str, Any]:
         else:
             update_elo(a, b, draw=True)
 
+    # Bench evidence gets a deterministic say in the ranking, not just a prompt.
+    apply_bench_adjustments(hypotheses)
     return {"hypotheses": hypotheses}
 
 
