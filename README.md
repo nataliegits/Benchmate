@@ -68,9 +68,6 @@ Benchmate/
 │   ├── notebook_gen.py     # parameterise notebook 02 with user's genes
 │   ├── colab_handoff.py    # push notebook to Gist (API or gh CLI)
 │   └── watcher.py          # optional: Drive sync folder watcher
-├── hermes/                 # Hermes Agent integration
-│   └── benchmate_runner.py # JSON API for chat-driven Benchmate
-├── HERMES.md               # Hermes VPS deployment guide
 └── DEPLOY.md               # Streamlit Cloud deployment guide
 ```
 
@@ -105,12 +102,10 @@ Opens at `http://localhost:8501`. Six tabs:
    see the top-N affected, sortable.
 3. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
    stream into the page. State downloads when finished.
-4. **Hermes preview.** See the JSON shape Hermes receives when wired up
-   for chat-driven runs.
-5. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
+4. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
    the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
    grounding compare, and the discrimination + alias-dedup tests.
-6. **Cross-check with other models.** Correlate the Elo ranking against
+5. **Cross-check with other models.** Correlate the Elo ranking against
    independent quantitative models — AlphaGenome (regulatory), Boltz
    (binding), Open Targets (association), DepMap (dependency), and
    AlphaMissense (pathogenicity). Low correlation flags hypotheses the
@@ -322,25 +317,6 @@ loop from ~$2.50 to ~$0.90 with no measurable hypothesis-quality loss.
 The same role-routing pattern works with any model litellm supports —
 Anthropic, OpenAI, Google, Mistral, Bedrock, and more.
 
-## Hermes integration
-
-`hermes/benchmate_runner.py` exposes Benchmate's main operations as
-JSON-in / JSON-out functions that the [Hermes Agent](https://hermes-agent.nousresearch.com/)
-can call via skills. Four functions: `list_cache`, `gene_neighbors`,
-`add_perturbation`, `run_benchmate`. Each is also runnable as a CLI:
-
-```bash
-python -m hermes.benchmate_runner list-cache
-python -m hermes.benchmate_runner neighbors TXNDC15 --top-n 10
-python -m hermes.benchmate_runner add-perturbation FOXP3 \
-    --cell-context "Plasma cells (extreme ER stress)"
-python -m hermes.benchmate_runner run "your research goal" --max-iterations 8
-```
-
-Wire Benchmate behind Hermes on a small VPS and you can trigger runs from
-Slack, Discord, or Telegram, or schedule them via natural-language cron.
-Full deployment guide in `HERMES.md`.
-
 ## How to extend
 
 Productive sequence, roughly in order of value:
@@ -357,12 +333,3 @@ Productive sequence, roughly in order of value:
    via the UI sidebar to your cost/quality preference.
 5. **Add LangSmith tracing** — set `LANGSMITH_API_KEY` and LangGraph
    traces automatically.
-
-## On honesty
-
-This is a small skeleton of Google's Co-Scientist architecture, not a
-replica of its quality. Google ran their version for many hours per
-research goal with Gemini 2.5 Pro and many tools. Benchmate's value isn't
-in matching that — it's in giving you a loop you can fully reason about,
-then extending it with the specific evidence sources your specific
-research actually needs.
