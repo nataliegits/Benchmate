@@ -1,0 +1,25 @@
+position,row,column,label
+A1,A,1,DMSO (vehicle)
+A2,A,2,bortezomib 10mM
+A3,A,3,
+A4,A,4,
+A5,A,5,
+A6,A,6,
+B1,B,1,
+B2,B,2,thapsigargin
+B3,B,3,CB-5083 10mM
+B4,B,4,
+B5,B,5,
+B6,B,6,
+C1,C,1,
+C2,C,2,
+C3,C,3,
+C4,C,4,
+C5,C,5,kifunensine
+C6,C,6,
+D1,D,1,
+D2,D,2,MG-132
+D3,D,3,
+D4,D,4,
+D5,D,5,
+D6,D,6,tunicamycin

@@ -47,7 +47,9 @@ Benchmate/
 │   ├── variant_scorer.py   # AlphaGenome / Enformer — regulatory-effect scoring
 │   ├── boltz_scorer.py     # Boltz API — structure & binding scoring
 │   ├── target_scorer.py    # Open Targets + DepMap + AlphaMissense scorers
-│   └── assay.py            # alamarBlue rig CSV -> viability -> bench evidence
+│   ├── assay.py            # alamarBlue rig CSV -> viability -> bench evidence
+│   ├── audit.py            # artifact guard: is a rig run real or an artifact?
+│   └── freezer.py          # CryoVision box map -> "where is reagent X?"
 ├── benchmark/              # Is the leaderboard trustworthy + how does it cross-check?
 │   ├── simulate.py         # free Monte Carlo over the real elo.py
 │   ├── metrics.py          # Spearman, top-k, churn, transitivity
@@ -71,6 +73,7 @@ Benchmate/
 ├── data/geneformer/        # cached perturbation results (CSV, gitignored)
 │   └── README.md           # expected CSV schema
 ├── data/rig/               # alamarBlue runs + generated bench-evidence JSON
+├── data/freezer/           # CryoVision box maps (position,row,column,label)
 ├── ui/                     # Streamlit UI
 │   ├── app.py              # 7-tab Streamlit app
 │   ├── notebook_gen.py     # parameterise notebook 02 with user's genes
@@ -299,6 +302,20 @@ lifts it (+40), applied once per (hypothesis, assay) pair. Matching is semantic:
 an LLM recognises when a hypothesis hits the same drug/target/mechanism as an
 assay even without the exact name, with a keyword prefilter as a fast free path.
 Upload runs from the **Bench assay** tab, or ingest via the CLI above.
+
+**An audit guard sits in front of the feedback.** `co_scientist/audit.py` checks a
+run's raw trace for artifacts — a saturated channel, a dark/blank sensor, a bubble
+(a sudden drop or spike-then-fall) — and a flagged run is downgraded to
+`needs-recheck` so an artifact can't move any ranking until it's re-run.
+
+**The find edge, too.** `co_scientist/freezer.py` consumes a CryoVision box scan
+(`position,row,column,label`) and answers "where is reagent X?" — so once the
+co-scientist picks a compound, it can point you at the slot. Produce a map with
+`python cryovision.py --image box.jpg --output box.csv`, drop it in `data/freezer/`,
+and `freezer.locate("CB-5083", box)` finds it.
+
+The **"The Loop"** tab strings all of this into one demo: think (ranking) → find
+(CryoVision) → test (rig + audit) → learn (the refuted idea loses Elo).
 
 ## Benchmarking the Elo tournament
 

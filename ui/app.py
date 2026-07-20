@@ -19,7 +19,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from co_scientist.tools import available_geneformer_genes, geneformer_neighbors
-from co_scientist import assay
+from co_scientist import assay, freezer
 from ui.notebook_gen import generate_notebook, resolve_to_ensembl, CELL_TYPE_PRESETS
 from ui.colab_handoff import handoff, gh_available, GhUnavailable
 from co_scientist.llm_config import model_for, _DEFAULT_ROLE_MODELS
@@ -1439,23 +1439,34 @@ with tab8:
 
     elif step == 1:
         st.subheader("Find — CryoVision locates the reagent")
-        st.markdown("Benchmate needs **CB-5083**. CryoVision reads a photo of the "
-                    "freezer box and finds it:")
-        target = ("B", 3)
+        st.markdown("Benchmate needs the compound. CryoVision reads a photo of the "
+                    "freezer box into a slot map; Benchmate searches it.")
+        box = freezer.load_box(freezer.DEFAULT_BOX)
+        reagent = st.text_input("Reagent to find", value="CB-5083", key="loop_reagent")
+        hits = freezer.locate(reagent, box)
+        target = (hits[0]["row"], str(hits[0]["column"])) if hits else None
+        rows_present = sorted({c["row"] for c in box})
+        cols_present = sorted({int(c["column"]) for c in box if c["column"]})
         grid = "<table style='border-collapse:collapse'>"
-        for r in "ABCD":
+        for r in rows_present:
             grid += "<tr>"
-            for c in range(1, 6):
-                hit = (r, c) == target
-                bg, fg = ("#111", "#fff") if hit else ("#f4f4f3", "#999")
-                lab = "CB-5083" if hit else f"{r}{c}"
-                grid += (f"<td style='border:1px solid #ddd;padding:10px 14px;"
-                         f"background:{bg};color:{fg};font-size:12px;"
+            for c in cols_present:
+                cell = next((x for x in box if x["row"] == r and str(x["column"]) == str(c)), None)
+                lab = cell["label"] if cell and cell["label"] else f"{r}{c}"
+                hit = target == (r, str(c))
+                empty = not (cell and cell["label"])
+                bg, fg = ("#111", "#fff") if hit else ("#f4f4f3", "#bbb" if empty else "#444")
+                grid += (f"<td style='border:1px solid #ddd;padding:9px 12px;"
+                         f"background:{bg};color:{fg};font-size:11px;max-width:110px;"
                          f"text-align:center'>{lab}</td>")
             grid += "</tr>"
         grid += "</table>"
         st.markdown(grid, unsafe_allow_html=True)
-        st.success("Found: CB-5083 at **B3**.")
+        if hits:
+            st.success(f"Found: **{hits[0]['label']}** at **{hits[0]['position']}**.")
+        else:
+            st.warning(f"'{reagent}' isn't in this box — try DMSO, bortezomib, "
+                       "MG-132, kifunensine, thapsigargin, or tunicamycin.")
 
     elif step == 2:
         st.subheader("Test — the alamarBlue rig, with an audit guard")
