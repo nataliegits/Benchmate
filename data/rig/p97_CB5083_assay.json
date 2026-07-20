@@ -3,7 +3,7 @@
   "hypothesis_label": "p97_CB5083",
   "drug": "CB-5083 (1 uM, 48h)",
   "cell_line": "RPMI-8226, bortezomib-resistant",
-  "readout": "alamarBlue red/blue reduction kinetics (TCS34725)",
+  "readout": "alamarBlue",
   "metrics": {
     "n_points": 61,
     "duration_s": 300.0,
@@ -19,5 +19,10 @@
     "verdict": "high viability \u2014 little to no kill"
   },
   "interpretation": "Cells stayed ~93% viable under CB-5083 (1 uM, 48h) \u2014 the treatment did not kill them. This WEAKENS the hypothesis.",
-  "direction_for_benchmate": "down-weight"
+  "direction_for_benchmate": "down-weight",
+  "audit": {
+    "ok": true,
+    "severe": false,
+    "flags": []
+  }
 }

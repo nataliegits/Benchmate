@@ -215,7 +215,7 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Start here",
     "New perturbation",
     "Inspect cache",
@@ -224,6 +224,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Cross-check with other models",
     "Bench assay",
     "About",
+    "The Loop",
 ])
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
@@ -1405,3 +1406,94 @@ with tab7:
         "6. [Part 5 — Filling out the panel](https://benchpressed.substack.com/p/building-benchmate-part-5-filling)"
     )
     st.caption("New posts land at benchpressed.substack.com.")
+
+# ── Tab 8 — The Loop (unified demo) ──────────────────────────
+with tab8:
+    st.header("The Loop — one question, all the way around")
+    st.caption("think → find → test → learn. This demo drives a single hypothesis "
+               "through every stage and back into the ranking.")
+
+    STAGES = ["1 · Think", "2 · Find", "3 · Test", "4 · Learn"]
+    st.session_state.setdefault("loop_step", 0)
+    step = st.session_state.loop_step
+    st.markdown("  →  ".join(f"**{s}**" if i == step else s
+                             for i, s in enumerate(STAGES)))
+    st.divider()
+
+    QUESTION = ("What ERAD-axis drug could re-sensitise bortezomib-resistant "
+                "multiple myeloma?")
+    HYPS = [
+        ("Inhibit p97/VCP with CB-5083 to re-impose proteotoxic stress", 1290),
+        ("SEL1L sustains ERAD throughput in resistant cells", 1260),
+        ("EDEM1 mannosidase buffers proteasome inhibition", 1205),
+        ("Re-challenge PSMB5 with bortezomib + an adjuvant", 1150),
+    ]
+
+    if step == 0:
+        st.subheader("Think — Benchmate ranks hypotheses")
+        st.markdown(f"**Research question:** {QUESTION}")
+        for i, (h, elo) in enumerate(sorted(HYPS, key=lambda x: -x[1]), 1):
+            tag = "  ⟵ top idea to test" if i == 1 else ""
+            st.markdown(f"{i}. **Elo {elo}** — {h}{tag}")
+        st.info("The tournament's #1: **CB-5083 → p97/VCP**.")
+
+    elif step == 1:
+        st.subheader("Find — CryoVision locates the reagent")
+        st.markdown("Benchmate needs **CB-5083**. CryoVision reads a photo of the "
+                    "freezer box and finds it:")
+        target = ("B", 3)
+        grid = "<table style='border-collapse:collapse'>"
+        for r in "ABCD":
+            grid += "<tr>"
+            for c in range(1, 6):
+                hit = (r, c) == target
+                bg, fg = ("#111", "#fff") if hit else ("#f4f4f3", "#999")
+                lab = "CB-5083" if hit else f"{r}{c}"
+                grid += (f"<td style='border:1px solid #ddd;padding:10px 14px;"
+                         f"background:{bg};color:{fg};font-size:12px;"
+                         f"text-align:center'>{lab}</td>")
+            grid += "</tr>"
+        grid += "</table>"
+        st.markdown(grid, unsafe_allow_html=True)
+        st.success("Found: CB-5083 at **B3**.")
+
+    elif step == 2:
+        st.subheader("Test — the alamarBlue rig, with an audit guard")
+        import pandas as pd
+        from co_scientist import audit as _aud
+        rows = assay.read_run("data/rig/alamarblue_run.csv")
+        m = assay.metrics(rows)
+        a = _aud.audit_run(rows)
+        call = assay.viability_call(m, control_delta=0.24)
+        st.line_chart(pd.DataFrame(rows).set_index("t_s")[["red_blue"]], height=220)
+        if a["severe"]:
+            st.error(_aud.audit_summary(a))
+        elif a["flags"]:
+            st.warning(_aud.audit_summary(a))
+        else:
+            st.success("Audit: clean — no artifacts. The result can be trusted.")
+        pct = call.get("viability_pct_of_control")
+        st.markdown(f"**Viability:** ~{pct:.0f}% of control — {call['verdict']}. "
+                    "The drug did **not** kill the cells.")
+
+    else:
+        st.subheader("Learn — the result updates the ranking")
+        st.markdown("The bench refuted the top idea, so it loses 60 Elo — and the "
+                    "leaderboard reorders:")
+        after = [(h, elo + (-60 if h.startswith("Inhibit p97") else 0),
+                  -60 if h.startswith("Inhibit p97") else 0) for h, elo in HYPS]
+        for i, (h, elo, adj) in enumerate(sorted(after, key=lambda x: -x[1]), 1):
+            note = "  _(bench −60)_" if adj else ""
+            st.markdown(f"{i}. **Elo {elo}** — {h}{note}")
+        st.info("CB-5083 → p97 dropped from #1 to #2. The loop closed: a wet-lab "
+                "result changed the AI's mind — and the audit guard made sure it "
+                "was a real result, not an artifact.")
+
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    if c1.button("← Back", disabled=step == 0, key="loop_back"):
+        st.session_state.loop_step = max(0, step - 1); st.rerun()
+    if c2.button("Next →", disabled=step == 3, key="loop_next"):
+        st.session_state.loop_step = min(3, step + 1); st.rerun()
+    if c3.button("Restart", key="loop_restart"):
+        st.session_state.loop_step = 0; st.rerun()

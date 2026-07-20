@@ -25,6 +25,8 @@ import csv
 import json
 from pathlib import Path
 
+from co_scientist import audit as _audit
+
 RIG_DIR = Path(__file__).resolve().parent.parent / "data" / "rig"
 
 
@@ -159,6 +161,7 @@ def summarize(rec: dict) -> str:
         f"Result: {rec['viability']['verdict']}.\n"
         f"Interpretation: {rec['interpretation']} "
         f"(suggested action: {rec['direction_for_benchmate']} this hypothesis)."
+        + (f"\n{_audit.audit_summary(rec['audit'])}" if rec.get("audit") else "")
     )
 
 
@@ -170,6 +173,14 @@ def ingest(csv_path: str | Path, *, hypothesis: str, drug: str, cell: str,
     call = viability_call(m, control_delta)
     rec = evidence_record(m, call, hypothesis=hypothesis, drug=drug,
                           cell=cell, readout=readout)
+    # Audit guard: an artifact must not move the ranking.
+    a = _audit.audit_run(rows)
+    rec["audit"] = a
+    if a["severe"]:
+        rec["direction_for_benchmate"] = "needs-recheck"
+        rec["interpretation"] = ("ARTIFACT FLAGGED by the audit — this run isn't "
+                                 "trustworthy and will not move any ranking until "
+                                 "re-run. " + rec["interpretation"])
     RIG_DIR.mkdir(parents=True, exist_ok=True)
     out = RIG_DIR / f"{hypothesis}_assay.json"
     out.write_text(json.dumps(rec, indent=2))
