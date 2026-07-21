@@ -1474,7 +1474,16 @@ with tab4:
         needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
         st.caption("alamarBlue, media, and plates are assumed on hand — this checks "
                    "the experimental compounds.")
-        rec = freezer.reconcile(needed, box)
+        if hasattr(freezer, "reconcile"):
+            rec = freezer.reconcile(needed, box)
+        else:
+            # A stale deploy may hold an older freezer module without reconcile();
+            # fall back to locate() so the tab still works. Reboot to refresh.
+            st.caption("Running a compatibility fallback — reboot the app to refresh.")
+            rec = [{"reagent": r, "found": bool(h),
+                    "position": h[0]["position"] if h else None,
+                    "label": h[0]["label"] if h else None}
+                   for r in needed for h in [freezer.locate(r, box)]]
         for row in rec:
             if row["found"]:
                 st.markdown(f"- **{row['reagent']}** — in the box at "
