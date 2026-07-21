@@ -1393,122 +1393,65 @@ with tab5:
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
-# ── Tab 4 — The Loop (guided tour + real bench ingest) ───────
+# ── Tab 4 — The Loop (design → execute → results & feedback) ─
 with tab4:
-    st.header("The Loop — one question, all the way around")
-    st.caption("think → find → test → learn. This demo drives a single hypothesis "
-               "through every stage and back into the ranking.")
+    st.header("The Loop — design, run, and learn from an experiment")
+    st.caption("Take a hypothesis to the bench and back: design the assay → find "
+               "the reagents → run it → feed the result back to sharpen the idea.")
 
-    STAGES = ["1 · Think", "2 · Find", "3 · Test", "4 · Learn"]
-    st.session_state.setdefault("loop_step", 0)
-    step = st.session_state.loop_step
-    st.markdown("  →  ".join(f"**{s}**" if i == step else s
-                             for i, s in enumerate(STAGES)))
-    st.divider()
+    DEFAULT_HYP = ("Inhibiting p97/VCP with CB-5083 re-imposes proteotoxic stress "
+                   "and kills bortezomib-resistant multiple myeloma cells.")
+    # let the Results step push a revised hypothesis back into Design (set before
+    # the widget with key 'loop_hyp' is instantiated, so it takes effect)
+    if "_pending_hyp" in st.session_state:
+        st.session_state["loop_hyp"] = st.session_state.pop("_pending_hyp")
+    st.session_state.setdefault("loop_hyp", DEFAULT_HYP)
+    have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
-    QUESTION = ("What ERAD-axis drug could re-sensitise bortezomib-resistant "
-                "multiple myeloma?")
-    HYPS = [
-        ("Inhibit p97/VCP with CB-5083 to re-impose proteotoxic stress", 1290),
-        ("SEL1L sustains ERAD throughput in resistant cells", 1260),
-        ("EDEM1 mannosidase buffers proteasome inhibition", 1205),
-        ("Re-challenge PSMB5 with bortezomib + an adjuvant", 1150),
-    ]
+    d_tab, e_tab, r_tab = st.tabs([
+        "1 · Design the experiment",
+        "2 · Execute — find the reagents",
+        "3 · Results & feedback",
+    ])
 
-    if step == 0:
-        st.subheader("Think — Benchmate ranks hypotheses")
-        st.markdown(f"**Research question:** {QUESTION}")
-        for i, (h, elo) in enumerate(sorted(HYPS, key=lambda x: -x[1]), 1):
-            tag = "  ⟵ top idea to test" if i == 1 else ""
-            st.markdown(f"{i}. **Elo {elo}** — {h}{tag}")
-        st.info("The tournament's #1: **CB-5083 → p97/VCP**.")
+    # ---------- 1. Design the experiment ----------
+    with d_tab:
+        st.text_area("Hypothesis to test", key="loop_hyp", height=90)
+        if not have_key:
+            st.info("Add your Anthropic API key in the sidebar to design an experiment.")
+        if st.button("Design an alamarBlue experiment", type="primary",
+                     disabled=not have_key, key="loop_design_btn"):
+            from co_scientist import experiment as _exp
+            with st.spinner("Designing the cleanest test…"):
+                try:
+                    st.session_state.loop_design = _exp.design_experiment(
+                        st.session_state.loop_hyp)
+                except Exception as ex:
+                    st.error(f"Design failed: {ex}")
+        d = st.session_state.get("loop_design")
+        if d:
+            st.markdown(f"**Aim.** {d.get('aim', '')}")
+            cc = st.columns(2)
+            cc[0].markdown(f"**Cell line**\n\n{d.get('cell_line', '')}")
+            cc[1].markdown(f"**Treatment**\n\n{d.get('treatment', '')}")
+            st.markdown(f"**Key comparison.** {d.get('comparison', '')}")
+            if d.get("controls"):
+                st.markdown("**Controls**")
+                for c in d["controls"]:
+                    st.markdown(f"- {c}")
+            st.markdown(f"**Readout.** {d.get('readout', '')}")
+            st.markdown(f"**Watch out for.** {d.get('key_confound', '')}")
+            if d.get("reagents_needed"):
+                st.success("Reagents to pull: " + ", ".join(d["reagents_needed"]))
+            st.caption("Next: Execute — locate these in your freezer.")
 
-    elif step == 1:
-        st.subheader("Find — CryoVision locates the reagent")
-        st.markdown("Benchmate needs the compound. CryoVision reads a photo of the "
-                    "freezer box into a slot map; Benchmate searches it.")
-        box = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
-        st.caption(f"Box: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')} "
-                   "— upload your own scanned box below.")
-        reagent = st.text_input("Reagent to find", value="CB-5083", key="loop_reagent")
-        hits = freezer.locate(reagent, box)
-        target = (hits[0]["row"], str(hits[0]["column"])) if hits else None
-        rows_present = sorted({c["row"] for c in box})
-        cols_present = sorted({int(c["column"]) for c in box if c["column"]})
-        grid = "<table style='border-collapse:collapse'>"
-        for r in rows_present:
-            grid += "<tr>"
-            for c in cols_present:
-                cell = next((x for x in box if x["row"] == r and str(x["column"]) == str(c)), None)
-                lab = cell["label"] if cell and cell["label"] else f"{r}{c}"
-                hit = target == (r, str(c))
-                empty = not (cell and cell["label"])
-                bg, fg = ("#111", "#fff") if hit else ("#f4f4f3", "#bbb" if empty else "#444")
-                grid += (f"<td style='border:1px solid #ddd;padding:9px 12px;"
-                         f"background:{bg};color:{fg};font-size:11px;max-width:110px;"
-                         f"text-align:center'>{lab}</td>")
-            grid += "</tr>"
-        grid += "</table>"
-        st.markdown(grid, unsafe_allow_html=True)
-        if hits:
-            st.success(f"Found: **{hits[0]['label']}** at **{hits[0]['position']}**.")
-        else:
-            st.warning(f"'{reagent}' isn't in this box — try DMSO, bortezomib, "
-                       "MG-132, kifunensine, thapsigargin, or tunicamycin.")
-
-    elif step == 2:
-        st.subheader("Test — the alamarBlue rig, with an audit guard")
-        import pandas as pd
-        from co_scientist import audit as _aud
-        rows = assay.read_run("data/rig/alamarblue_run.csv")
-        m = assay.metrics(rows)
-        a = _aud.audit_run(rows)
-        call = assay.viability_call(m, control_delta=0.24)
-        st.line_chart(pd.DataFrame(rows).set_index("t_s")[["red_blue"]], height=220)
-        if a["severe"]:
-            st.error(_aud.audit_summary(a))
-        elif a["flags"]:
-            st.warning(_aud.audit_summary(a))
-        else:
-            st.success("Audit: clean — no artifacts. The result can be trusted.")
-        pct = call.get("viability_pct_of_control")
-        st.markdown(f"**Viability:** ~{pct:.0f}% of control — {call['verdict']}. "
-                    "The drug did **not** kill the cells.")
-
-    else:
-        st.subheader("Learn — the result updates the ranking")
-        st.markdown("The bench refuted the top idea, so it loses 60 Elo — and the "
-                    "leaderboard reorders:")
-        after = [(h, elo + (-60 if h.startswith("Inhibit p97") else 0),
-                  -60 if h.startswith("Inhibit p97") else 0) for h, elo in HYPS]
-        for i, (h, elo, adj) in enumerate(sorted(after, key=lambda x: -x[1]), 1):
-            note = "  _(bench −60)_" if adj else ""
-            st.markdown(f"{i}. **Elo {elo}** — {h}{note}")
-        st.info("CB-5083 → p97 dropped from #1 to #2. The loop closed: a wet-lab "
-                "result changed the AI's mind — and the audit guard made sure it "
-                "was a real result, not an artifact.")
-
-    st.divider()
-    c1, c2, c3 = st.columns(3)
-    if c1.button("← Back", disabled=step == 0, key="loop_back"):
-        st.session_state.loop_step = max(0, step - 1); st.rerun()
-    if c2.button("Next →", disabled=step == 3, key="loop_next"):
-        st.session_state.loop_step = min(3, step + 1); st.rerun()
-    if c3.button("Restart", key="loop_restart"):
-        st.session_state.loop_step = 0; st.rerun()
-
-    st.divider()
-    st.caption("Bring your own data into the loop:")
-
-    with st.expander("Freezer boxes (CryoVision) — upload a scanned box & search it"):
-        st.markdown(
-            "Scan a photo **locally** with CryoVision "
-            "(`python cryovision.py --image box.jpg --output box.csv`), then upload "
-            "the resulting map (CSV or JSON) here. Benchmate searches the map — the "
-            "vision step runs on your machine, not the hosted app."
-        )
+    # ---------- 2. Execute — find the reagents ----------
+    with e_tab:
+        st.markdown("Find the reagents your design needs. Upload a CryoVision box "
+                    "map (scan a photo locally: `python cryovision.py --image "
+                    "box.jpg --output box.csv`), or use the demo box.")
         fu = st.file_uploader("CryoVision box map (CSV or JSON)",
-                              type=["csv", "json"], key="freezer_up")
+                              type=["csv", "json"], key="exec_box_up")
         if fu is not None:
             import tempfile
             suffix = ".json" if fu.name.lower().endswith("json") else ".csv"
@@ -1517,20 +1460,70 @@ with tab4:
             try:
                 st.session_state.loop_box = freezer.load_box(tmp)
                 st.session_state.loop_box_name = fu.name
-                filled = sum(1 for c in st.session_state.loop_box if c["label"])
-                st.success(f"Loaded {fu.name}: {len(st.session_state.loop_box)} slots, "
-                           f"{filled} filled. It's now used by the Find stage above.")
-            except Exception as e:
-                st.error(f"Couldn't read that map: {e}")
-        q = st.text_input("Search this box for a reagent", key="freezer_q")
-        if q:
-            b = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
-            hits = freezer.locate(q, b)
-            if hits:
-                for h in hits[:5]:
-                    st.markdown(f"- **{h['label']}** at **{h['position']}**")
-            else:
-                st.caption("Not found in this box.")
+                st.success(f"Loaded {fu.name}.")
+            except Exception as ex:
+                st.error(f"Couldn't read that map: {ex}")
+        box = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
+        st.caption(f"Box: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')}")
 
-    with st.expander("Log a real bench run (alamarBlue) → evidence"):
+        d = st.session_state.get("loop_design")
+        prefill = (", ".join(d["reagents_needed"])
+                   if d and d.get("reagents_needed") else "CB-5083, bortezomib, DMSO")
+        needed_txt = st.text_input("Reagents needed (comma-separated)",
+                                   value=prefill, key="exec_needed")
+        needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
+        st.caption("alamarBlue, media, and plates are assumed on hand — this checks "
+                   "the experimental compounds.")
+        rec = freezer.reconcile(needed, box)
+        for row in rec:
+            if row["found"]:
+                st.markdown(f"- **{row['reagent']}** — in the box at "
+                            f"**{row['position']}** ({row['label']})")
+            else:
+                st.markdown(f"- **{row['reagent']}** — not in this box; order it or "
+                            "point Benchmate at the right box")
+        missing = [r["reagent"] for r in rec if not r["found"]]
+        if missing:
+            st.warning("Need to source: " + ", ".join(missing))
+        elif needed:
+            st.success("Everything's on hand — you're ready to run.")
+
+    # ---------- 3. Results & feedback ----------
+    with r_tab:
+        st.markdown("Ran the assay? Drop the rig CSV here. Benchmate scores "
+                    "viability, audits it for artifacts, and files it as evidence.")
         _bench_assay_panel()
+
+        st.divider()
+        st.subheader("Feed it back — sharpen the hypothesis")
+        on_record = assay.available_assays()
+        default_summary = ""
+        if on_record:
+            rec0 = assay.assay_evidence(on_record[-1])
+            if rec0:
+                default_summary = (f"{rec0['drug']} on {rec0['cell_line']}: "
+                                   f"{rec0['viability']['verdict']} "
+                                   f"({rec0['direction_for_benchmate']}).")
+        summary = st.text_area("Bench result summary", value=default_summary,
+                               height=80, key="loop_result_sum")
+        if not have_key:
+            st.info("Add your Anthropic API key to refine the hypothesis.")
+        if st.button("Refine the hypothesis from this result",
+                     disabled=not (have_key and summary.strip()), key="loop_refine_btn"):
+            from co_scientist import experiment as _exp
+            with st.spinner("Rethinking in light of the bench…"):
+                try:
+                    st.session_state.loop_refined = _exp.refine_hypothesis(
+                        st.session_state.loop_hyp, summary)
+                except Exception as ex:
+                    st.error(f"Refine failed: {ex}")
+        ref = st.session_state.get("loop_refined")
+        if ref:
+            st.markdown(f"**Verdict:** {ref.get('verdict', '')}")
+            st.markdown(f"**Revised hypothesis:** {ref.get('revised_hypothesis', '')}")
+            st.caption(ref.get("rationale", ""))
+            st.markdown(f"**Next experiment:** {ref.get('next_experiment', '')}")
+            if st.button("Use the revised hypothesis in Design", key="loop_use_refined"):
+                st.session_state["_pending_hyp"] = ref.get(
+                    "revised_hypothesis", st.session_state.loop_hyp)
+                st.rerun()

@@ -72,6 +72,21 @@ def locate(reagent: str, box: list[dict]) -> list[dict]:
     return [dict(c, score=s) for s, c in hits]
 
 
+def reconcile(reagents_needed: list[str], box: list[dict]) -> list[dict]:
+    """For each needed reagent, is it in the box and where? Returns
+    [{reagent, found, position, label}] — the have/need/where check for the
+    'execute the experiment' step."""
+    out = []
+    for r in reagents_needed:
+        hits = locate(r, box)
+        if hits:
+            out.append({"reagent": r, "found": True,
+                        "position": hits[0]["position"], "label": hits[0]["label"]})
+        else:
+            out.append({"reagent": r, "found": False, "position": None, "label": None})
+    return out
+
+
 def available_boxes() -> list[str]:
     if not FREEZER_DIR.exists():
         return []
