@@ -103,31 +103,31 @@ checkpointed to `state.json`; resume with `python run.py --resume`.
 streamlit run ui/app.py
 ```
 
-Opens at `http://localhost:8501`. Seven tabs:
+Opens at `http://localhost:8501`. The six tabs mirror the loop — each is one
+stage of think → gather → generate → cross-check → run → (feed back):
 
-1. **Start here.** Type a research question; a small LLM call turns it into a
-   personalised plan — which genes to perturb, in which cell context, and which
+1. **Start here** *(design).* Type a research question; a small LLM call turns it
+   into a plan — which genes to perturb, in which cell context, and which
    cross-check models fit — and pre-fills the other tabs for you.
-2. **New perturbation.** Type gene symbols, pick a cell context. Resolves
-   to Ensembl IDs via mygene, generates a parameterised copy of
-   `notebooks/02_geneformer_ciliated_cells.ipynb` with your genes pre-filled,
-   pushes it to a GitHub Gist, returns a one-click "Open in Colab" link.
-   (Cached perturbations are browsable in the sidebar's *Cached Geneformer
-   perturbations* panel.)
-3. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
-   stream into the page. State downloads when finished.
-4. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
-   the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
-   grounding compare, and the discrimination + alias-dedup tests.
-5. **Cross-check with other models.** Correlate the Elo ranking against
-   independent quantitative models — AlphaGenome (regulatory), Boltz
-   (binding), Open Targets (association), DepMap (dependency), and
-   AlphaMissense (pathogenicity). Low correlation flags hypotheses the
-   leaderboard alone shouldn't pick for the bench.
-6. **The Loop.** The closed-loop demo — think → find → test → learn — plus the
-   real ingest tools: upload a CryoVision box map (CSV/JSON) and search it, and
-   log an alamarBlue rig run (CSV) as bench evidence the next run reasons over.
-7. **About.** What Benchmate is, links, and the Substack series.
+2. **New perturbation** *(gather evidence).* Type gene symbols, pick a cell
+   context. Resolves to Ensembl IDs via mygene, generates a parameterised Colab
+   notebook, and returns an "Open in Colab" link. Cached perturbations live in the
+   sidebar's *Cached Geneformer perturbations* panel. (Your own experimental data
+   feeds the agents here; the external models stay independent — see tab 4.)
+3. **Run Benchmate** *(generate & rank).* Paste a research goal, choose iterations,
+   run. Logs stream in; state downloads when finished.
+4. **Cross-check your hypotheses** *(trust the pick).* Correlate the Elo ranking
+   against independent quantitative models — AlphaGenome, Boltz, Open Targets,
+   DepMap, AlphaMissense. Low correlation flags hypotheses the leaderboard alone
+   shouldn't pick. An *"Is the ranking itself reliable?"* expander holds the
+   benchmark/eval suite (simulator, judge diagnostics, validate, fair-vs-naive,
+   ontology compare, discrimination + alias-dedup) — trust the *machinery* as well
+   as the *output*.
+5. **The Loop** *(run the experiment + feed back).* A guided think → find → test →
+   learn tour, plus the real ingest tools: upload a CryoVision box map (CSV/JSON)
+   and search it, and log an alamarBlue rig run (CSV) as bench evidence the next
+   run reasons over.
+6. **About.** What Benchmate is, links, and the Substack series.
 
 ## The Geneformer integration
 

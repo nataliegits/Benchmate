@@ -215,12 +215,11 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Start here",
     "New perturbation",
     "Run Benchmate",
-    "Benchmark",
-    "Cross-check with other models",
+    "Cross-check your hypotheses",
     "The Loop",
     "About",
 ])
@@ -514,8 +513,8 @@ with tab2:
         else:
             st.error(f"Benchmate exited with code {proc.returncode}.")
 
-# ── Tab 3 — Benchmark ────────────────────────────────────────
-with tab3:
+# ── Benchmark section (folded into "Cross-check your hypotheses") ────
+def _benchmark_section():
     st.header("Is the Elo leaderboard trustworthy?")
     st.write(
         "The simulator replays Benchmate's **real** `elo.py` against synthetic "
@@ -1071,8 +1070,8 @@ with tab3:
         "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
 
-# ── Tab 4 — Cross-check with other models ─────────────────────
-with tab4:
+# ── Tab 3 — Cross-check your hypotheses ──────────────────────
+with tab3:
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
@@ -1286,6 +1285,13 @@ with tab4:
         "with AlphaMissense (free Ensembl VEP), and writes "
         "`alphamissense_scores.json` — plus a pathogenic-vs-benign calibration check.")
 
+    st.divider()
+    with st.expander("Is the ranking itself reliable? (benchmark the tournament)"):
+        st.caption("The panel above checks the *hypotheses*. This checks the "
+                   "*machinery* — does the Elo tournament and the LLM judge produce "
+                   "a ranking you can trust in the first place?")
+        _benchmark_section()
+
 # ── Bench-assay panel (reused inside The Loop) ───────────────
 def _bench_assay_panel():
     st.write(
@@ -1359,8 +1365,8 @@ def _bench_assay_panel():
     else:
         st.caption("No bench results on record yet — ingest a run above.")
 
-# ── Tab 6 — About (kept last) ────────────────────────────────
-with tab6:
+# ── Tab 5 — About (kept last) ────────────────────────────────
+with tab5:
     st.header("About Benchmate")
     st.markdown(
         "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
@@ -1387,8 +1393,8 @@ with tab6:
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
-# ── Tab 5 — The Loop (unified demo + real ingest) ────────────
-with tab5:
+# ── Tab 4 — The Loop (guided tour + real bench ingest) ───────
+with tab4:
     st.header("The Loop — one question, all the way around")
     st.caption("think → find → test → learn. This demo drives a single hypothesis "
                "through every stage and back into the ranking.")
