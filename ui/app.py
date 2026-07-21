@@ -120,7 +120,7 @@ with st.sidebar:
         st.caption("Required for the Run Benchmate tab.")
 
     st.divider()
-    st.subheader("Cached perturbations")
+    st.subheader("Cached Geneformer perturbations")
     cached = available_geneformer_genes()
     if cached:
         st.metric("genes", len(cached))
@@ -215,16 +215,14 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Start here",
     "New perturbation",
-    "Inspect cache",
     "Run Benchmate",
     "Benchmark",
     "Cross-check with other models",
-    "Bench assay",
-    "About",
     "The Loop",
+    "About",
 ])
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
@@ -413,25 +411,8 @@ with tab1:
                 "Drag those files into the Upload CSVs panel in the sidebar."
             )
 
-# ── Tab 2 ────────────────────────────────────────────────────
+# ── Tab 2 — Run Benchmate ────────────────────────────────────
 with tab2:
-    st.header("Browse the cache")
-    if not cached:
-        st.info("Cache is empty.")
-    else:
-        gene = st.selectbox("Pick a cached gene", cached)
-        n = st.slider("How many top affected genes", 5, 50, 10)
-        r = geneformer_neighbors(gene, top_n=n)
-        if "error" in r:
-            st.error(r["error"])
-        else:
-            st.write(f"Top {r['n_results']} affected genes when {gene} was deleted:")
-            import pandas as pd
-            df = pd.DataFrame(r["affected_genes"])
-            st.dataframe(df, use_container_width=True)
-
-# ── Tab 3 ────────────────────────────────────────────────────
-with tab3:
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
         "Research goal",
@@ -533,8 +514,8 @@ with tab3:
         else:
             st.error(f"Benchmate exited with code {proc.returncode}.")
 
-# ── Tab 4 ────────────────────────────────────────────────────
-with tab4:
+# ── Tab 3 — Benchmark ────────────────────────────────────────
+with tab3:
     st.header("Is the Elo leaderboard trustworthy?")
     st.write(
         "The simulator replays Benchmate's **real** `elo.py` against synthetic "
@@ -1090,8 +1071,8 @@ with tab4:
         "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
 
-# ── Tab 5 — Cross-check with other models ─────────────────────
-with tab5:
+# ── Tab 4 — Cross-check with other models ─────────────────────
+with tab4:
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
@@ -1305,9 +1286,8 @@ with tab5:
         "with AlphaMissense (free Ensembl VEP), and writes "
         "`alphamissense_scores.json` — plus a pathogenic-vs-benign calibration check.")
 
-# ── Tab 6 — Bench assay (close the loop) ─────────────────────
-with tab6:
-    st.header("Bench assay → evidence")
+# ── Bench-assay panel (reused inside The Loop) ───────────────
+def _bench_assay_panel():
     st.write(
         "Upload a run from the alamarBlue rig (columns `t_s, R, G, B, red_blue`). "
         "Benchmate turns the colour kinetics into a viability readout and files it "
@@ -1329,7 +1309,7 @@ with tab6:
 
     if st.button("Ingest assay → evidence", type="primary", disabled=up is None):
         import tempfile, pandas as pd
-        tmp = pathlib.Path(tempfile.mkdtemp()) / "run.csv"
+        tmp = Path(tempfile.mkdtemp()) / "run.csv"
         tmp.write_bytes(up.getvalue())
         try:
             rec = assay.ingest(tmp, hypothesis=a_hyp.strip() or "assay_run",
@@ -1379,8 +1359,8 @@ with tab6:
     else:
         st.caption("No bench results on record yet — ingest a run above.")
 
-# ── Tab 7 — About ────────────────────────────────────────────
-with tab7:
+# ── Tab 6 — About (kept last) ────────────────────────────────
+with tab6:
     st.header("About Benchmate")
     st.markdown(
         "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
@@ -1407,8 +1387,8 @@ with tab7:
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
-# ── Tab 8 — The Loop (unified demo) ──────────────────────────
-with tab8:
+# ── Tab 5 — The Loop (unified demo + real ingest) ────────────
+with tab5:
     st.header("The Loop — one question, all the way around")
     st.caption("think → find → test → learn. This demo drives a single hypothesis "
                "through every stage and back into the ranking.")
@@ -1441,7 +1421,9 @@ with tab8:
         st.subheader("Find — CryoVision locates the reagent")
         st.markdown("Benchmate needs the compound. CryoVision reads a photo of the "
                     "freezer box into a slot map; Benchmate searches it.")
-        box = freezer.load_box(freezer.DEFAULT_BOX)
+        box = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
+        st.caption(f"Box: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')} "
+                   "— upload your own scanned box below.")
         reagent = st.text_input("Reagent to find", value="CB-5083", key="loop_reagent")
         hits = freezer.locate(reagent, box)
         target = (hits[0]["row"], str(hits[0]["column"])) if hits else None
@@ -1508,3 +1490,41 @@ with tab8:
         st.session_state.loop_step = min(3, step + 1); st.rerun()
     if c3.button("Restart", key="loop_restart"):
         st.session_state.loop_step = 0; st.rerun()
+
+    st.divider()
+    st.caption("Bring your own data into the loop:")
+
+    with st.expander("Freezer boxes (CryoVision) — upload a scanned box & search it"):
+        st.markdown(
+            "Scan a photo **locally** with CryoVision "
+            "(`python cryovision.py --image box.jpg --output box.csv`), then upload "
+            "the resulting map (CSV or JSON) here. Benchmate searches the map — the "
+            "vision step runs on your machine, not the hosted app."
+        )
+        fu = st.file_uploader("CryoVision box map (CSV or JSON)",
+                              type=["csv", "json"], key="freezer_up")
+        if fu is not None:
+            import tempfile
+            suffix = ".json" if fu.name.lower().endswith("json") else ".csv"
+            tmp = Path(tempfile.mkdtemp()) / ("box" + suffix)
+            tmp.write_bytes(fu.getvalue())
+            try:
+                st.session_state.loop_box = freezer.load_box(tmp)
+                st.session_state.loop_box_name = fu.name
+                filled = sum(1 for c in st.session_state.loop_box if c["label"])
+                st.success(f"Loaded {fu.name}: {len(st.session_state.loop_box)} slots, "
+                           f"{filled} filled. It's now used by the Find stage above.")
+            except Exception as e:
+                st.error(f"Couldn't read that map: {e}")
+        q = st.text_input("Search this box for a reagent", key="freezer_q")
+        if q:
+            b = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
+            hits = freezer.locate(q, b)
+            if hits:
+                for h in hits[:5]:
+                    st.markdown(f"- **{h['label']}** at **{h['position']}**")
+            else:
+                st.caption("Not found in this box.")
+
+    with st.expander("Log a real bench run (alamarBlue) → evidence"):
+        _bench_assay_panel()

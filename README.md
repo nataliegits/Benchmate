@@ -112,21 +112,22 @@ Opens at `http://localhost:8501`. Seven tabs:
    to Ensembl IDs via mygene, generates a parameterised copy of
    `notebooks/02_geneformer_ciliated_cells.ipynb` with your genes pre-filled,
    pushes it to a GitHub Gist, returns a one-click "Open in Colab" link.
-3. **Inspect cache.** Browse what's in `data/geneformer/` — pick a gene,
-   see the top-N affected, sortable.
-4. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
+   (Cached perturbations are browsable in the sidebar's *Cached Geneformer
+   perturbations* panel.)
+3. **Run Benchmate.** Paste a research goal, choose iterations, run. Logs
    stream into the page. State downloads when finished.
-5. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
+4. **Benchmark.** Is the Elo leaderboard trustworthy? The free simulator,
    the judge diagnostics, validate-vs-gold, fair-vs-naive, the ontology
    grounding compare, and the discrimination + alias-dedup tests.
-6. **Cross-check with other models.** Correlate the Elo ranking against
+5. **Cross-check with other models.** Correlate the Elo ranking against
    independent quantitative models — AlphaGenome (regulatory), Boltz
    (binding), Open Targets (association), DepMap (dependency), and
    AlphaMissense (pathogenicity). Low correlation flags hypotheses the
    leaderboard alone shouldn't pick for the bench.
-7. **Bench assay.** Upload an alamarBlue rig run (CSV); Benchmate turns the
-   colour kinetics into a viability readout, files it as evidence, and the next
-   run reasons over it. Closes the *test → learn* edge of the loop.
+6. **The Loop.** The closed-loop demo — think → find → test → learn — plus the
+   real ingest tools: upload a CryoVision box map (CSV/JSON) and search it, and
+   log an alamarBlue rig run (CSV) as bench evidence the next run reasons over.
+7. **About.** What Benchmate is, links, and the Substack series.
 
 ## The Geneformer integration
 
