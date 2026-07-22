@@ -72,6 +72,45 @@ def locate(reagent: str, box: list[dict]) -> list[dict]:
     return [dict(c, score=s) for s, c in hits]
 
 
+def load_inventory(path: str | Path) -> list[dict]:
+    """Load an inventory from a CryoVision box map (CSV/JSON) OR a free-form
+    reagent list (CSV/Excel). Flexible columns: a name column (label / reagent /
+    name / item / compound / antibody) and an optional location column
+    (position / location / slot / box / freezer / where). Returns the same
+    [{position,row,column,label}] shape that locate() / reconcile() consume."""
+    p = Path(path)
+    suf = p.suffix.lower()
+    if suf == ".json":
+        return load_box(p)
+    if suf in (".xlsx", ".xls"):
+        import pandas as pd
+        recs = pd.read_excel(p).fillna("").to_dict("records")
+    else:
+        with open(p, newline="") as f:
+            recs = [{k: (v or "") for k, v in r.items()} for r in csv.DictReader(f)]
+    if not recs:
+        return []
+    keys = {str(k).lower().strip(): k for k in recs[0].keys()}
+
+    def pick(*names):
+        return next((keys[n] for n in names if n in keys), None)
+
+    name_col = pick("label", "reagent", "name", "item", "compound", "antibody")
+    loc_col = pick("position", "location", "slot", "box", "freezer", "where")
+    out = []
+    for r in recs:
+        label = str(r.get(name_col, "")).strip() if name_col else ""
+        if not label:
+            continue
+        pos = str(r.get(loc_col, "")).strip() if loc_col else ""
+        m = re.match(r"([A-Za-z]+)?(\d+)?", pos)
+        out.append({"position": pos,
+                    "row": (m.group(1) or "") if m else "",
+                    "column": (m.group(2) or "") if m else "",
+                    "label": label})
+    return out
+
+
 def reconcile(reagents_needed: list[str], box: list[dict]) -> list[dict]:
     """For each needed reagent, is it in the box and where? Returns
     [{reagent, found, position, label}] — the have/need/where check for the

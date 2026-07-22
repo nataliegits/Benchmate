@@ -220,7 +220,7 @@ tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "New perturbation",
     "Run Benchmate",
     "Cross-check your hypotheses",
-    "The Loop",
+    "Experiment",
     "About",
 ])
 
@@ -1292,7 +1292,7 @@ with tab3:
                    "a ranking you can trust in the first place?")
         _benchmark_section()
 
-# ── Bench-assay panel (reused inside The Loop) ───────────────
+# ── Bench-assay panel (reused inside Experiment → Results) ───
 def _bench_assay_panel():
     st.write(
         "Upload a run from the alamarBlue rig (columns `t_s, R, G, B, red_blue`). "
@@ -1393,9 +1393,9 @@ with tab5:
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
-# ── Tab 4 — The Loop (design → execute → results & feedback) ─
+# ── Tab 4 — Experiment (design → execute → results → inventory) ─
 with tab4:
-    st.header("The Loop — design, run, and learn from an experiment")
+    st.header("Experiment — design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
                "the reagents → run it → feed the result back to sharpen the idea.")
 
@@ -1408,10 +1408,11 @@ with tab4:
     st.session_state.setdefault("loop_hyp", DEFAULT_HYP)
     have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
-    d_tab, e_tab, r_tab = st.tabs([
-        "1 · Design the experiment",
-        "2 · Execute — find the reagents",
+    d_tab, e_tab, r_tab, inv_tab = st.tabs([
+        "1 · Design",
+        "2 · Execute",
         "3 · Results & feedback",
+        "Reagent inventory",
     ])
 
     # ---------- 1. Design the experiment ----------
@@ -1447,24 +1448,11 @@ with tab4:
 
     # ---------- 2. Execute — find the reagents ----------
     with e_tab:
-        st.markdown("Find the reagents your design needs. Upload a CryoVision box "
-                    "map (scan a photo locally: `python cryovision.py --image "
-                    "box.jpg --output box.csv`), or use the demo box.")
-        fu = st.file_uploader("CryoVision box map (CSV or JSON)",
-                              type=["csv", "json"], key="exec_box_up")
-        if fu is not None:
-            import tempfile
-            suffix = ".json" if fu.name.lower().endswith("json") else ".csv"
-            tmp = Path(tempfile.mkdtemp()) / ("box" + suffix)
-            tmp.write_bytes(fu.getvalue())
-            try:
-                st.session_state.loop_box = freezer.load_box(tmp)
-                st.session_state.loop_box_name = fu.name
-                st.success(f"Loaded {fu.name}.")
-            except Exception as ex:
-                st.error(f"Couldn't read that map: {ex}")
+        st.markdown("Check the reagents your design needs against what's in your "
+                    "freezer. (Manage your boxes and lists in the **Reagent "
+                    "inventory** tab.)")
         box = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
-        st.caption(f"Box: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')}")
+        st.caption(f"Inventory: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')}")
 
         d = st.session_state.get("loop_design")
         prefill = (", ".join(d["reagents_needed"])
@@ -1536,3 +1524,44 @@ with tab4:
                 st.session_state["_pending_hyp"] = ref.get(
                     "revised_hypothesis", st.session_state.loop_hyp)
                 st.rerun()
+
+    # ---------- Reagent inventory ----------
+    with inv_tab:
+        st.markdown(
+            "Your on-hand reagents — this is what **Execute** checks against. "
+            "Upload a **CryoVision box map** (scan a photo locally: "
+            "`python cryovision.py --image box.jpg --output box.csv`) or a plain "
+            "**reagent list** (CSV or Excel with a name column, and optionally a "
+            "location/box column)."
+        )
+        fu = st.file_uploader("Inventory — box map or reagent list (CSV, JSON, or Excel)",
+                              type=["csv", "json", "xlsx", "xls"], key="inv_up")
+        if fu is not None:
+            import tempfile
+            suffix = "." + fu.name.rsplit(".", 1)[-1].lower()
+            tmp = Path(tempfile.mkdtemp()) / ("inv" + suffix)
+            tmp.write_bytes(fu.getvalue())
+            try:
+                inv = (freezer.load_inventory(tmp)
+                       if hasattr(freezer, "load_inventory") else freezer.load_box(tmp))
+                st.session_state.loop_box = inv
+                st.session_state.loop_box_name = fu.name
+                st.success(f"Loaded {fu.name}: {len(inv)} entries, "
+                           f"{sum(1 for c in inv if c['label'])} with a reagent.")
+            except Exception as ex:
+                st.error(f"Couldn't read that file: {ex}")
+
+        inv = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
+        st.caption(f"Active inventory: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')} "
+                   f"— {sum(1 for c in inv if c['label'])} reagents on hand.")
+
+        q = st.text_input("Search the inventory", key="inv_q")
+        shown = [c for c in inv if c["label"] and
+                 (not q or freezer._norm(q) in freezer._norm(c["label"]))]
+        import pandas as pd
+        if shown:
+            df = pd.DataFrame([{"reagent": c["label"], "location": c["position"] or "—"}
+                               for c in shown])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No matching reagents.")

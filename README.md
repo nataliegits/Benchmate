@@ -123,10 +123,12 @@ stage of think → gather → generate → cross-check → run → (feed back):
    benchmark/eval suite (simulator, judge diagnostics, validate, fair-vs-naive,
    ontology compare, discrimination + alias-dedup) — trust the *machinery* as well
    as the *output*.
-5. **The Loop** *(run the experiment + feed back).* A guided think → find → test →
-   learn tour, plus the real ingest tools: upload a CryoVision box map (CSV/JSON)
-   and search it, and log an alamarBlue rig run (CSV) as bench evidence the next
-   run reasons over.
+5. **Experiment** *(run it + feed back).* Four sub-tabs: **Design** (a hypothesis
+   → a runnable alamarBlue design + the reagents to pull), **Execute** (reconcile
+   those reagents against your freezer — have / where / missing), **Results &
+   feedback** (log a rig CSV → viability + audit → refine the hypothesis and send
+   it back to Design), and **Reagent inventory** (upload a CryoVision box map or a
+   plain reagent list in CSV/Excel; this is what Execute checks against).
 6. **About.** What Benchmate is, links, and the Substack series.
 
 ## The Geneformer integration
@@ -315,8 +317,10 @@ co-scientist picks a compound, it can point you at the slot. Produce a map with
 `python cryovision.py --image box.jpg --output box.csv`, drop it in `data/freezer/`,
 and `freezer.locate("CB-5083", box)` finds it.
 
-The **"The Loop"** tab strings all of this into one demo: think (ranking) → find
-(CryoVision) → test (rig + audit) → learn (the refuted idea loses Elo).
+The **Experiment** tab strings all of this together: **Design** a test for a
+hypothesis → **Execute** (find the reagents in your inventory) → **Results &
+feedback** (rig CSV → audit → refine the hypothesis), with a **Reagent inventory**
+sub-tab for your boxes and lists.
 
 ## Benchmarking the Elo tournament
 
