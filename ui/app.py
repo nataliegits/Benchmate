@@ -1534,6 +1534,32 @@ with tab4:
             "**reagent list** (CSV or Excel with a name column, and optionally a "
             "location/box column)."
         )
+        with st.container(border=True):
+            st.markdown("**Scan a freezer photo** *(runs locally)*")
+            st.caption("Needs the CryoVision repo on this machine (set `CRYOVISION_DIR` "
+                       "or clone it next to Benchmate). On the hosted app, upload a "
+                       "CSV/Excel map below instead.")
+            img = st.file_uploader("Freezer box photo (JPG/PNG)",
+                                   type=["jpg", "jpeg", "png"], key="inv_img")
+            if img is not None and st.button("Parse box with CryoVision", key="inv_scan_btn"):
+                if not (hasattr(freezer, "cryovision_available") and freezer.cryovision_available()):
+                    st.warning("CryoVision not found locally. Set `CRYOVISION_DIR` to the "
+                               "cloned repo, or upload a CSV/Excel map below.")
+                else:
+                    import tempfile
+                    ext = "." + img.name.rsplit(".", 1)[-1].lower()
+                    tmpimg = Path(tempfile.mkdtemp()) / ("box" + ext)
+                    tmpimg.write_bytes(img.getvalue())
+                    with st.spinner("Reading the box with CryoVision… (up to a minute)"):
+                        try:
+                            inv = freezer.scan_image(tmpimg)
+                            st.session_state.loop_box = inv
+                            st.session_state.loop_box_name = img.name + " (scanned)"
+                            st.success(f"Parsed {img.name}: "
+                                       f"{sum(1 for c in inv if c['label'])} reagents read.")
+                        except Exception as ex:
+                            st.error(f"Scan failed: {ex}")
+
         fu = st.file_uploader("Inventory — box map or reagent list (CSV, JSON, or Excel)",
                               type=["csv", "json", "xlsx", "xls"], key="inv_up")
         if fu is not None:

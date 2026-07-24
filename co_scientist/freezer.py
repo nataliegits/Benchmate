@@ -13,11 +13,61 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 FREEZER_DIR = Path(__file__).resolve().parent.parent / "data" / "freezer"
 DEFAULT_BOX = FREEZER_DIR / "demo_drug_box.csv"
+
+
+# ---------------------------------------------------------------------------
+# In-app scanning: shell out to the separate CryoVision repo when it's present
+# on this machine. Kept decoupled (subprocess, not import) — Benchmate stays
+# light, and this is a no-op on hosted Streamlit where the CV stack isn't
+# installed. Set CRYOVISION_DIR, or clone cryovision next to Benchmate / on the
+# Desktop, to enable it.
+# ---------------------------------------------------------------------------
+
+def _cryovision_dir() -> str:
+    if os.environ.get("CRYOVISION_DIR"):
+        return os.environ["CRYOVISION_DIR"]
+    repo = Path(__file__).resolve().parent.parent
+    for cand in (repo.parent / "cryovision", Path.home() / "Desktop" / "cryovision"):
+        if (cand / "cryovision.py").exists():
+            return str(cand)
+    return ""
+
+
+def cryovision_available() -> bool:
+    d = _cryovision_dir()
+    return bool(d) and (Path(d) / "cryovision.py").exists()
+
+
+def scan_image(image_path: str | Path, *, fast: bool = True) -> list[dict]:
+    """Parse a freezer-box PHOTO into a box map by running the local CryoVision
+    repo as a subprocess. Returns the same [{position,row,column,label}] shape.
+    Raises RuntimeError (with a clear message) if CryoVision isn't installed —
+    the caller should offer the CSV/Excel upload instead."""
+    d = _cryovision_dir()
+    if not (d and (Path(d) / "cryovision.py").exists()):
+        raise RuntimeError(
+            "CryoVision isn't available on this machine. Clone "
+            "github.com/nataliegits/cryovision next to Benchmate (or set "
+            "CRYOVISION_DIR), then retry — or upload a CSV/Excel map instead.")
+    import tempfile
+    out = Path(tempfile.mkdtemp()) / "scan.csv"
+    cmd = [sys.executable, "cryovision.py", "--image", str(image_path),
+           "--output", str(out)]
+    if fast:
+        cmd.append("--fast")
+    proc = subprocess.run(cmd, cwd=str(d), env=os.environ.copy(),
+                          capture_output=True, text=True, timeout=600)
+    if proc.returncode != 0 or not out.exists():
+        raise RuntimeError((proc.stderr or proc.stdout or "CryoVision failed").strip()[-400:])
+    return load_box(out)
 
 
 def load_box(path: str | Path) -> list[dict]:
