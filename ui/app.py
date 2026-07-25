@@ -215,14 +215,117 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+chat_tab, tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Benchmate",
     "Start here",
-    "New perturbation",
-    "Run Benchmate",
-    "Cross-check your hypotheses",
+    "Evidence",
+    "Leaderboard",
+    "Cross-check",
     "Experiment",
     "About",
 ])
+
+# ── Benchmate — the conversation (primary surface) ───────────
+with chat_tab:
+    from co_scientist import orchestrator as orch
+
+    st.caption("Ask, steer, or correct. Benchmate coordinates the tools and "
+               "reports back here — and pauses for you before anything that "
+               "spends credits or writes evidence.")
+
+    st.session_state.setdefault("chat", [])
+    st.session_state.setdefault("pending", None)
+
+    def _project_context() -> str:
+        bits = []
+        lb = orch.run_tool("show_leaderboard", {"top_n": 3})
+        if "hypotheses" in lb and lb["hypotheses"]:
+            bits.append("Top hypotheses: " + "; ".join(
+                f"{h['statement'][:80]} (Elo {h['elo']})" for h in lb["hypotheses"]))
+        br = orch.run_tool("bench_results", {})
+        if br.get("results"):
+            bits.append("Bench results: " + "; ".join(
+                f"{r['label']} → {r['verdict']} ({r['action']})" for r in br["results"]))
+        inv = st.session_state.get("loop_box_name", "demo_drug_box.csv")
+        bits.append(f"Freezer inventory loaded: {inv}")
+        return "\n".join(bits)
+
+    # ---- history ----
+    for m in st.session_state.chat:
+        with st.chat_message("user" if m["role"] == "user" else "assistant"):
+            st.markdown(m["content"])
+            if m.get("data") is not None:
+                with st.expander("result"):
+                    st.json(m["data"], expanded=False)
+
+    # ---- pending approval card (human in the loop) ----
+    p = st.session_state.pending
+    if p:
+        with st.chat_message("assistant"):
+            st.markdown(f"✋ **Waiting for you.** I'd like to run "
+                        f"`{p['tool']}`.")
+            if p.get("say"):
+                st.markdown(p["say"])
+            st.json(p["args"], expanded=False)
+            note = st.text_input("Add guidance before it runs (optional)",
+                                 key="approve_note",
+                                 placeholder="e.g. use a 6-point dose series")
+            c1, c2, c3 = st.columns(3)
+            if c1.button("Approve & run", type="primary", key="approve_go"):
+                args = dict(p["args"])
+                if note.strip():
+                    for k in ("hypothesis", "result_summary"):
+                        if k in args:
+                            args[k] = f"{args[k]}\n\nUser guidance: {note.strip()}"
+                            break
+                with st.spinner(f"Running {p['tool']}…"):
+                    res = orch.run_tool(p["tool"], args)
+                    say = orch.interpret(p["tool"], res, p["user_msg"], note)
+                st.session_state.chat.append(
+                    {"role": "assistant",
+                     "content": say or f"Ran `{p['tool']}`.", "data": res})
+                if p["tool"] == "design_experiment" and isinstance(res, dict) and not res.get("error"):
+                    st.session_state.loop_design = res
+                if p["tool"] == "refine_hypothesis" and isinstance(res, dict):
+                    st.session_state.loop_refined = res
+                st.session_state.pending = None
+                st.rerun()
+            if c2.button("Skip", key="approve_skip"):
+                st.session_state.chat.append(
+                    {"role": "assistant", "content": "Skipped — what would you like instead?"})
+                st.session_state.pending = None
+                st.rerun()
+            if c3.button("Just discuss it", key="approve_talk"):
+                st.session_state.pending = None
+                st.rerun()
+
+    # ---- input ----
+    if prompt := st.chat_input("Ask, steer, or correct Benchmate…"):
+        st.session_state.chat.append({"role": "user", "content": prompt})
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            st.session_state.chat.append(
+                {"role": "assistant",
+                 "content": "Add your Anthropic API key in the sidebar and I'll get going."})
+            st.rerun()
+        with st.spinner("Thinking…"):
+            plan = orch.decide(prompt, st.session_state.chat[:-1], _project_context())
+        tool = plan.get("tool")
+        if tool and orch.needs_approval(tool):
+            st.session_state.pending = {"tool": tool, "args": plan.get("args", {}),
+                                        "say": plan.get("say", ""), "user_msg": prompt}
+        elif tool:
+            res = orch.run_tool(tool, plan.get("args", {}))
+            say = orch.interpret(tool, res, prompt) or plan.get("say") or f"Ran `{tool}`."
+            st.session_state.chat.append({"role": "assistant", "content": say, "data": res})
+        else:
+            st.session_state.chat.append(
+                {"role": "assistant", "content": plan.get("say") or "…"})
+        st.rerun()
+
+    if not st.session_state.chat:
+        st.markdown("**Try:** *what's my top hypothesis?* · *where's CB-5083?* · "
+                    "*design an experiment for the top idea* · "
+                    "*do I have everything I need to run it?*")
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
 with tab0:
@@ -437,81 +540,93 @@ with tab2:
             log_box.code("\n".join(log_lines[-120:]))
         proc.wait()
         if proc.returncode == 0:
-            st.success("Benchmate finished.")
-            state_file = REPO_ROOT / "state.json"
-            if state_file.exists():
-                # Parse and display top hypotheses as a real Streamlit table
-                # so column headers stay visible regardless of log scrollback.
-                state_data = json.loads(state_file.read_text())
-                hyps = sorted(
-                    state_data.get("hypotheses", []),
-                    key=lambda h: (h.get("matches_played", 0) > 0,
-                                   h.get("elo", 0)),
-                    reverse=True,
-                )[:5]
-                if hyps:
-                    import pandas as pd
-                    rows = []
-                    for h in hyps:
-                        played = h.get("matches_played", 0)
-                        rows.append({
-                            "Elo": round(h.get("elo", 0), 0),
-                            "Matches": played,
-                            "Gen": h.get("generation", 0),
-                            "Ranked": "yes" if played > 0 else "no (untested)",
-                            "Statement": h.get("statement", ""),
-                        })
-                    df = pd.DataFrame(rows)
-                    st.subheader(f"Top {len(hyps)} hypotheses")
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Elo": st.column_config.NumberColumn(
-                                width="small",
-                                help="Tournament rating (starts at 1200). "
-                                     "Wins push up, losses pull down."),
-                            "Matches": st.column_config.NumberColumn(
-                                width="small",
-                                help="Number of pairwise tournament rounds "
-                                     "this hypothesis has been judged in. "
-                                     "Higher = more reliable rating."),
-                            "Gen": st.column_config.NumberColumn(
-                                width="small",
-                                help="Generation: 0 = original Generation "
-                                     "output, 1 = first Evolution refinement, "
-                                     "2 = second, etc."),
-                            "Ranked": st.column_config.TextColumn(
-                                width="small",
-                                help="'no' means the hypothesis was created "
-                                     "by Evolution after the last Ranking "
-                                     "round, so its Elo is still the default "
-                                     "1200 and isn't a quality signal."),
-                            "Statement": st.column_config.TextColumn(width="large"),
-                        },
-                    )
-                    # Per-hypothesis expand for rationale + experiment
-                    for i, h in enumerate(hyps, 1):
-                        with st.expander(
-                            f"#{i} — Elo {round(h.get('elo', 0), 0):.0f} "
-                            f"— rationale + experiment"
-                        ):
-                            st.markdown("**Rationale**")
-                            st.markdown(h.get("rationale", ""))
-                            st.markdown("**Proposed experiment**")
-                            st.markdown(h.get("experiment", ""))
-                            if h.get("review_notes"):
-                                st.markdown("**Reviewer notes**")
-                                for note in h["review_notes"]:
-                                    st.markdown(f"- {note}")
-                st.download_button(
-                    "Download state.json",
-                    state_file.read_text(),
-                    file_name="state.json",
-                )
+            st.session_state.run_ok = True
         else:
-            st.error(f"Benchmate exited with code {proc.returncode}.")
+            st.session_state.run_ok = False
+            st.session_state.run_rc = proc.returncode
+
+    # ---- Results (rendered on EVERY rerun, so they survive clicking around) ----
+    # Read from state.json on disk, so the leaderboard is still here after you
+    # switch tabs, tweak a widget, or even restart the app.
+    state_file = REPO_ROOT / "state.json"
+    if st.session_state.get("run_ok") is False:
+        st.error(f"Benchmate exited with code {st.session_state.get('run_rc')}.")
+    elif st.session_state.get("run_ok"):
+        st.success("Benchmate finished.")
+    if state_file.exists():
+        # Parse and display top hypotheses as a real Streamlit table
+        # so column headers stay visible regardless of log scrollback.
+        state_data = json.loads(state_file.read_text())
+        hyps = sorted(
+            state_data.get("hypotheses", []),
+            key=lambda h: (h.get("matches_played", 0) > 0,
+                           h.get("elo", 0)),
+            reverse=True,
+        )[:5]
+        if hyps:
+            import pandas as pd
+            rows = []
+            for h in hyps:
+                played = h.get("matches_played", 0)
+                rows.append({
+                    "Elo": round(h.get("elo", 0), 0),
+                    "Matches": played,
+                    "Gen": h.get("generation", 0),
+                    "Ranked": "yes" if played > 0 else "no (untested)",
+                    "Statement": h.get("statement", ""),
+                })
+            df = pd.DataFrame(rows)
+            st.subheader(f"Top {len(hyps)} hypotheses")
+            st.caption("Loaded from the last completed run "
+                       "(`state.json`) — this persists across tab "
+                       "switches and app restarts.")
+            st.dataframe(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Elo": st.column_config.NumberColumn(
+                        width="small",
+                        help="Tournament rating (starts at 1200). "
+                             "Wins push up, losses pull down."),
+                    "Matches": st.column_config.NumberColumn(
+                        width="small",
+                        help="Number of pairwise tournament rounds "
+                             "this hypothesis has been judged in. "
+                             "Higher = more reliable rating."),
+                    "Gen": st.column_config.NumberColumn(
+                        width="small",
+                        help="Generation: 0 = original Generation "
+                             "output, 1 = first Evolution refinement, "
+                             "2 = second, etc."),
+                    "Ranked": st.column_config.TextColumn(
+                        width="small",
+                        help="'no' means the hypothesis was created "
+                             "by Evolution after the last Ranking "
+                             "round, so its Elo is still the default "
+                             "1200 and isn't a quality signal."),
+                    "Statement": st.column_config.TextColumn(width="large"),
+                },
+            )
+            # Per-hypothesis expand for rationale + experiment
+            for i, h in enumerate(hyps, 1):
+                with st.expander(
+                    f"#{i} — Elo {round(h.get('elo', 0), 0):.0f} "
+                    f"— rationale + experiment"
+                ):
+                    st.markdown("**Rationale**")
+                    st.markdown(h.get("rationale", ""))
+                    st.markdown("**Proposed experiment**")
+                    st.markdown(h.get("experiment", ""))
+                    if h.get("review_notes"):
+                        st.markdown("**Reviewer notes**")
+                        for note in h["review_notes"]:
+                            st.markdown(f"- {note}")
+        st.download_button(
+            "Download state.json",
+            state_file.read_text(),
+            file_name="state.json",
+        )
 
 # ── Benchmark section (folded into "Cross-check your hypotheses") ────
 def _benchmark_section():
@@ -1304,9 +1419,10 @@ def _bench_assay_panel():
     up = st.file_uploader("alamarBlue run CSV", type=["csv"], key="assay_up")
     col_a, col_b = st.columns(2)
     with col_a:
-        a_hyp = st.text_input("Hypothesis label", value="p97_CB5083", key="a_hyp",
+        a_hyp = st.text_input("Hypothesis label", value="SEL1L_kifunensine", key="a_hyp",
                               help="Ties this result to a hypothesis; agents match on it.")
-        a_drug = st.text_input("Drug / treatment", value="CB-5083 (1 uM, 48h)", key="a_drug")
+        a_drug = st.text_input("Drug / treatment",
+                               value="kifunensine (10 uM, 48h) + bortezomib", key="a_drug")
     with col_b:
         a_cell = st.text_input("Cell line", value="RPMI-8226, bortezomib-resistant", key="a_cell")
         a_ctrl = st.number_input("Vehicle-control Δ(red/blue) (optional)",
@@ -1431,19 +1547,32 @@ with tab4:
                     st.error(f"Design failed: {ex}")
         d = st.session_state.get("loop_design")
         if d:
-            st.markdown(f"**Aim.** {d.get('aim', '')}")
+            def _txt(v):
+                """Render a field whether the model returned a string, a list,
+                or a nested object."""
+                if isinstance(v, dict):
+                    return "  \n".join(f"*{k.replace('_', ' ')}:* {_txt(x)}"
+                                       for k, x in v.items())
+                if isinstance(v, list):
+                    return "  \n".join(f"- {_txt(x)}" for x in v)
+                return str(v or "")
+
+            st.markdown(f"**Aim.** {_txt(d.get('aim'))}")
             cc = st.columns(2)
-            cc[0].markdown(f"**Cell line**\n\n{d.get('cell_line', '')}")
-            cc[1].markdown(f"**Treatment**\n\n{d.get('treatment', '')}")
-            st.markdown(f"**Key comparison.** {d.get('comparison', '')}")
+            cc[0].markdown(f"**Cell line**\n\n{_txt(d.get('cell_line'))}")
+            cc[1].markdown(f"**Treatment**\n\n{_txt(d.get('treatment'))}")
+            st.markdown(f"**Key comparison.** {_txt(d.get('comparison'))}")
             if d.get("controls"):
                 st.markdown("**Controls**")
-                for c in d["controls"]:
-                    st.markdown(f"- {c}")
-            st.markdown(f"**Readout.** {d.get('readout', '')}")
-            st.markdown(f"**Watch out for.** {d.get('key_confound', '')}")
+                st.markdown(_txt(d["controls"]))
+            st.markdown(f"**Readout.** {_txt(d.get('readout'))}")
+            st.markdown(f"**Watch out for.** {_txt(d.get('key_confound'))}")
+            if d.get("limitation"):
+                st.warning(f"**What this can't establish.** {_txt(d['limitation'])}")
             if d.get("reagents_needed"):
-                st.success("Reagents to pull: " + ", ".join(d["reagents_needed"]))
+                reg = d["reagents_needed"]
+                reg = reg if isinstance(reg, list) else [str(reg)]
+                st.success("Reagents to pull: " + ", ".join(str(r) for r in reg))
             st.caption("Next: Execute — locate these in your freezer.")
 
     # ---------- 2. Execute — find the reagents ----------
@@ -1455,8 +1584,11 @@ with tab4:
         st.caption(f"Inventory: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')}")
 
         d = st.session_state.get("loop_design")
-        prefill = (", ".join(d["reagents_needed"])
-                   if d and d.get("reagents_needed") else "CB-5083, bortezomib, DMSO")
+        _rn = (d or {}).get("reagents_needed")
+        if isinstance(_rn, str):
+            _rn = [_rn]
+        prefill = (", ".join(str(r) for r in _rn) if _rn
+                   else "kifunensine, bortezomib, DMSO")
         needed_txt = st.text_input("Reagents needed (comma-separated)",
                                    value=prefill, key="exec_needed")
         needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
@@ -1542,7 +1674,11 @@ with tab4:
             img = st.file_uploader("Freezer box photo (JPG/PNG)",
                                    type=["jpg", "jpeg", "png"], key="inv_img")
             if img is not None and st.button("Parse box with CryoVision", key="inv_scan_btn"):
-                if not (hasattr(freezer, "cryovision_available") and freezer.cryovision_available()):
+                if not os.environ.get("ANTHROPIC_API_KEY"):
+                    st.warning("CryoVision's vision step needs your Anthropic key. "
+                               "Put it in the sidebar (and/or `export ANTHROPIC_API_KEY=...` "
+                               "before launching the app), then retry.")
+                elif not (hasattr(freezer, "cryovision_available") and freezer.cryovision_available()):
                     st.warning("CryoVision not found locally. Set `CRYOVISION_DIR` to the "
                                "cloned repo, or upload a CSV/Excel map below.")
                 else:

@@ -13,11 +13,17 @@ from __future__ import annotations
 from .llm import call_json
 
 RIG_CAPABILITY = (
-    "The only assay available is a colorimetric alamarBlue (resazurin) cell-"
-    "viability readout on a small DIY rig: dose cells with a compound, incubate, "
-    "add alamarBlue, and read the red/blue ratio over minutes. It measures "
-    "metabolic viability (kill vs no-kill) across a few doses plus controls — "
-    "not mechanism, localisation, or expression."
+    "The ONLY assay available is a colorimetric alamarBlue (resazurin) cell-"
+    "viability readout on a small DIY rig: dose cells with a COMPOUND from the "
+    "freezer, incubate, add alamarBlue, and read the red/blue ratio over minutes. "
+    "It measures metabolic viability (kill vs no-kill) across a few doses plus "
+    "controls — not mechanism, localisation, expression, or protein interactions.\n"
+    "There is NO capacity for genetic manipulation: no shRNA/siRNA, no CRISPR, no "
+    "transfection, no overexpression, no immunoblot, no co-IP, no pulse-chase.\n"
+    "So if the hypothesis is genetic (a knockdown, an overexpression, a "
+    "protein-level claim), do NOT propose those. Instead design the closest "
+    "PHARMACOLOGICAL proxy: pick a small molecule that perturbs the same pathway "
+    "arm, and be explicit about what that proxy can and cannot establish."
 )
 
 
@@ -27,7 +33,15 @@ def design_experiment(hypothesis: str) -> dict:
     readout, key_confound."""
     return call_json(
         f"Hypothesis to test:\n{hypothesis}\n\n{RIG_CAPABILITY}\n\n"
-        "Design the cleanest alamarBlue experiment to test it. Output a JSON object:\n"
+        "Design the cleanest alamarBlue experiment to test it.\n"
+        "FORMAT RULES — follow exactly:\n"
+        "- Every value is a PLAIN STRING (or a list of plain strings). No nested "
+        "objects.\n"
+        "- Keep each value under 40 words. Be concrete, not exhaustive.\n"
+        "- Never invent a compound's mechanism of action. Use only well-established "
+        "pharmacology; if no good small-molecule proxy exists for this hypothesis, "
+        "say so in \"limitation\" rather than inventing one.\n\n"
+        "Output a JSON object:\n"
         '  "aim": one sentence — what this experiment decides,\n'
         '  "cell_line": a real, appropriate human cell line to use,\n'
         '  "treatment": the compound + dose range + timepoint,\n'
@@ -39,8 +53,11 @@ def design_experiment(hypothesis: str) -> dict:
         "hand),\n"
         '  "readout": what you measure, and which result would SUPPORT vs REFUTE '
         "the hypothesis,\n"
-        '  "key_confound": the single artifact or confound most likely to fool you.',
-        role="generation", max_tokens=1100, temperature=0.4,
+        '  "key_confound": the single artifact or confound most likely to fool you,\n'
+        '  "limitation": what this viability assay CANNOT establish about the '
+        "hypothesis — say so plainly, especially if you substituted a "
+        "pharmacological proxy for a genetic manipulation.",
+        role="generation", max_tokens=3000, temperature=0.4,
     )
 
 

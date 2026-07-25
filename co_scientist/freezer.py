@@ -59,7 +59,11 @@ def scan_image(image_path: str | Path, *, fast: bool = True) -> list[dict]:
             "CRYOVISION_DIR), then retry — or upload a CSV/Excel map instead.")
     import tempfile
     out = Path(tempfile.mkdtemp()) / "scan.csv"
-    cmd = [sys.executable, "cryovision.py", "--image", str(image_path),
+    # Use CryoVision's own interpreter if it has a separate venv (set
+    # CRYOVISION_PYTHON); otherwise the interpreter running Benchmate, which
+    # needs CryoVision's deps (opencv, etc.) installed.
+    pyexe = os.environ.get("CRYOVISION_PYTHON", sys.executable)
+    cmd = [pyexe, "cryovision.py", "--image", str(image_path),
            "--output", str(out)]
     if fast:
         cmd.append("--fast")
