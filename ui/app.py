@@ -215,8 +215,7 @@ st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
 
-chat_tab, tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Benchmate",
+tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Start here",
     "Evidence",
     "Leaderboard",
@@ -225,110 +224,125 @@ chat_tab, tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "About",
 ])
 
-# ── Benchmate — the conversation (primary surface) ───────────
-with chat_tab:
-    from co_scientist import orchestrator as orch
 
-    st.caption("Ask, steer, or correct. Benchmate coordinates the tools and "
-               "reports back here — and pauses for you before anything that "
-               "spends credits or writes evidence.")
+# ── Benchmate anchor — one agent, reachable from every tab ───
+def benchmate_anchor(where: str, suggestions: str = ""):
+    """A collapsible Benchmate assistant pinned into a tab.
+
+    One shared conversation and one shared approval queue across every tab, so
+    it's the same colleague wherever you are — it just also knows which page
+    you're on. Reads run instantly; anything that spends credits or writes
+    evidence waits for you.
+    """
+    from co_scientist import orchestrator as orch
 
     st.session_state.setdefault("chat", [])
     st.session_state.setdefault("pending", None)
+    pend = st.session_state.pending
+    n = len(st.session_state.chat)
+    label = ("Benchmate — waiting for your approval" if pend
+             else f"Ask Benchmate{f'  ({n})' if n else ''}")
 
-    def _project_context() -> str:
-        bits = []
-        lb = orch.run_tool("show_leaderboard", {"top_n": 3})
-        if "hypotheses" in lb and lb["hypotheses"]:
-            bits.append("Top hypotheses: " + "; ".join(
-                f"{h['statement'][:80]} (Elo {h['elo']})" for h in lb["hypotheses"]))
-        br = orch.run_tool("bench_results", {})
-        if br.get("results"):
-            bits.append("Bench results: " + "; ".join(
-                f"{r['label']} → {r['verdict']} ({r['action']})" for r in br["results"]))
-        inv = st.session_state.get("loop_box_name", "demo_drug_box.csv")
-        bits.append(f"Freezer inventory loaded: {inv}")
-        return "\n".join(bits)
+    with st.expander(label, expanded=bool(pend)):
+        if suggestions:
+            st.caption(f"Try: {suggestions}")
 
-    # ---- history ----
-    for m in st.session_state.chat:
-        with st.chat_message("user" if m["role"] == "user" else "assistant"):
-            st.markdown(m["content"])
-            if m.get("data") is not None:
-                with st.expander("result"):
-                    st.json(m["data"], expanded=False)
+        for m in st.session_state.chat[-6:]:
+            with st.chat_message("user" if m["role"] == "user" else "assistant"):
+                st.markdown(m["content"])
+                if m.get("data") is not None:
+                    with st.expander("result"):
+                        st.json(m["data"], expanded=False)
 
-    # ---- pending approval card (human in the loop) ----
-    p = st.session_state.pending
-    if p:
-        with st.chat_message("assistant"):
-            st.markdown(f"✋ **Waiting for you.** I'd like to run "
-                        f"`{p['tool']}`.")
-            if p.get("say"):
-                st.markdown(p["say"])
-            st.json(p["args"], expanded=False)
+        # ---- approval gate (the human-in-the-loop moment) ----
+        if pend:
+            st.warning(f"**Waiting for you.** I'd like to run `{pend['tool']}`.")
+            if pend.get("say"):
+                st.markdown(pend["say"])
+            st.json(pend["args"], expanded=False)
             note = st.text_input("Add guidance before it runs (optional)",
-                                 key="approve_note",
+                                 key=f"note_{where}",
                                  placeholder="e.g. use a 6-point dose series")
             c1, c2, c3 = st.columns(3)
-            if c1.button("Approve & run", type="primary", key="approve_go"):
-                args = dict(p["args"])
+            if c1.button("Approve & run", type="primary", key=f"go_{where}"):
+                args = dict(pend["args"])
                 if note.strip():
                     for k in ("hypothesis", "result_summary"):
                         if k in args:
                             args[k] = f"{args[k]}\n\nUser guidance: {note.strip()}"
                             break
-                with st.spinner(f"Running {p['tool']}…"):
-                    res = orch.run_tool(p["tool"], args)
-                    say = orch.interpret(p["tool"], res, p["user_msg"], note)
+                with st.spinner(f"Running {pend['tool']}…"):
+                    res = orch.run_tool(pend["tool"], args)
+                    say = orch.interpret(pend["tool"], res, pend["user_msg"], note)
                 st.session_state.chat.append(
                     {"role": "assistant",
-                     "content": say or f"Ran `{p['tool']}`.", "data": res})
-                if p["tool"] == "design_experiment" and isinstance(res, dict) and not res.get("error"):
+                     "content": say or f"Ran `{pend['tool']}`.", "data": res})
+                if pend["tool"] == "design_experiment" and isinstance(res, dict) \
+                        and not res.get("error"):
                     st.session_state.loop_design = res
-                if p["tool"] == "refine_hypothesis" and isinstance(res, dict):
+                    st.session_state.chat.append(
+                        {"role": "assistant",
+                         "content": "I put the design in **Experiment → Design**."})
+                if pend["tool"] == "refine_hypothesis" and isinstance(res, dict):
                     st.session_state.loop_refined = res
                 st.session_state.pending = None
                 st.rerun()
-            if c2.button("Skip", key="approve_skip"):
+            if c2.button("Skip", key=f"skip_{where}"):
+                st.session_state.pending = None
+                st.rerun()
+            if c3.button("Clear chat", key=f"clr_{where}"):
+                st.session_state.chat = []
+                st.session_state.pending = None
+                st.rerun()
+
+        # ---- ask ----
+        q = st.text_input("Ask, steer, or correct Benchmate…", key=f"ask_{where}")
+        if st.button("Send", key=f"send_{where}") and q.strip():
+            st.session_state.chat.append({"role": "user", "content": q.strip()})
+            if not os.environ.get("ANTHROPIC_API_KEY"):
                 st.session_state.chat.append(
-                    {"role": "assistant", "content": "Skipped — what would you like instead?"})
-                st.session_state.pending = None
+                    {"role": "assistant",
+                     "content": "Add your Anthropic API key in the sidebar and I'll get going."})
                 st.rerun()
-            if c3.button("Just discuss it", key="approve_talk"):
-                st.session_state.pending = None
-                st.rerun()
-
-    # ---- input ----
-    if prompt := st.chat_input("Ask, steer, or correct Benchmate…"):
-        st.session_state.chat.append({"role": "user", "content": prompt})
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            st.session_state.chat.append(
-                {"role": "assistant",
-                 "content": "Add your Anthropic API key in the sidebar and I'll get going."})
+            ctx = _project_context() + f"\nThe user is currently on the **{where}** tab."
+            with st.spinner("Thinking…"):
+                plan = orch.decide(q.strip(), st.session_state.chat[:-1], ctx)
+            tool = plan.get("tool")
+            if tool and orch.needs_approval(tool):
+                st.session_state.pending = {"tool": tool, "args": plan.get("args", {}),
+                                            "say": plan.get("say", ""),
+                                            "user_msg": q.strip()}
+            elif tool:
+                res = orch.run_tool(tool, plan.get("args", {}))
+                say = (orch.interpret(tool, res, q.strip())
+                       or plan.get("say") or f"Ran `{tool}`.")
+                st.session_state.chat.append(
+                    {"role": "assistant", "content": say, "data": res})
+            else:
+                st.session_state.chat.append(
+                    {"role": "assistant", "content": plan.get("say") or "…"})
             st.rerun()
-        with st.spinner("Thinking…"):
-            plan = orch.decide(prompt, st.session_state.chat[:-1], _project_context())
-        tool = plan.get("tool")
-        if tool and orch.needs_approval(tool):
-            st.session_state.pending = {"tool": tool, "args": plan.get("args", {}),
-                                        "say": plan.get("say", ""), "user_msg": prompt}
-        elif tool:
-            res = orch.run_tool(tool, plan.get("args", {}))
-            say = orch.interpret(tool, res, prompt) or plan.get("say") or f"Ran `{tool}`."
-            st.session_state.chat.append({"role": "assistant", "content": say, "data": res})
-        else:
-            st.session_state.chat.append(
-                {"role": "assistant", "content": plan.get("say") or "…"})
-        st.rerun()
 
-    if not st.session_state.chat:
-        st.markdown("**Try:** *what's my top hypothesis?* · *where's CB-5083?* · "
-                    "*design an experiment for the top idea* · "
-                    "*do I have everything I need to run it?*")
+
+def _project_context() -> str:
+    """What Benchmate knows about the project, injected on every turn."""
+    from co_scientist import orchestrator as orch
+    bits = []
+    lb = orch.run_tool("show_leaderboard", {"top_n": 3})
+    if lb.get("hypotheses"):
+        bits.append("Top hypotheses: " + "; ".join(
+            f"{h['statement'][:80]} (Elo {h['elo']})" for h in lb["hypotheses"]))
+    br = orch.run_tool("bench_results", {})
+    if br.get("results"):
+        bits.append("Bench results: " + "; ".join(
+            f"{r['label']} → {r['verdict']} ({r['action']})" for r in br["results"]))
+    bits.append("Freezer inventory loaded: "
+                + st.session_state.get("loop_box_name", "demo_drug_box.csv"))
+    return "\n".join(bits)
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
 with tab0:
+    benchmate_anchor("start", "*turn my question into a plan* · *what should I perturb?*")
     st.header("Start here — from question to cross-checked hypotheses")
     st.write(
         "Type a research question. Benchmate reads it and lays out the exact "
@@ -432,6 +446,7 @@ with tab0:
 
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
+    benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
     st.header("Add genes to the perturbation cache")
     st.write(
         "Enter the gene symbols you want to perturb and pick the cell "
@@ -515,6 +530,7 @@ with tab1:
 
 # ── Tab 2 — Run Benchmate ────────────────────────────────────
 with tab2:
+    benchmate_anchor("leaderboard", "*what's my top hypothesis?* · *why did CB-5083 drop?*")
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
         "Research goal",
@@ -1187,6 +1203,7 @@ def _benchmark_section():
 
 # ── Tab 3 — Cross-check your hypotheses ──────────────────────
 with tab3:
+    benchmate_anchor("crosscheck", "*summarise the cross-checks* · *does the panel back the top idea?*")
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
@@ -1483,6 +1500,7 @@ def _bench_assay_panel():
 
 # ── Tab 5 — About (kept last) ────────────────────────────────
 with tab5:
+    benchmate_anchor("about", "*what can you do?* · *how does the loop work?*")
     st.header("About Benchmate")
     st.markdown(
         "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
@@ -1511,6 +1529,7 @@ with tab5:
 
 # ── Tab 4 — Experiment (design → execute → results → inventory) ─
 with tab4:
+    benchmate_anchor("experiment", "*design an experiment for the top idea* · *where is kifunensine?* · *do I have everything?*")
     st.header("Experiment — design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
                "the reagents → run it → feed the result back to sharpen the idea.")
