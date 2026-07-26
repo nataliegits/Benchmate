@@ -103,32 +103,32 @@ checkpointed to `state.json`; resume with `python run.py --resume`.
 streamlit run ui/app.py
 ```
 
-Opens at `http://localhost:8501`. The six tabs mirror the loop — each is one
-stage of think → gather → generate → cross-check → run → (feed back):
+Opens at `http://localhost:8501`. The tabs are numbered because they *are* the
+loop — and a **Benchmate assistant is pinned into every one of them** (one shared
+conversation; it pauses for your approval before anything that spends credits or
+writes evidence):
 
-1. **Start here** *(design).* Type a research question; a small LLM call turns it
-   into a plan — which genes to perturb, in which cell context, and which
-   cross-check models fit — and pre-fills the other tabs for you.
-2. **New perturbation** *(gather evidence).* Type gene symbols, pick a cell
-   context. Resolves to Ensembl IDs via mygene, generates a parameterised Colab
-   notebook, and returns an "Open in Colab" link. Cached perturbations live in the
-   sidebar's *Cached Geneformer perturbations* panel. (Your own experimental data
-   feeds the agents here; the external models stay independent — see tab 4.)
-3. **Run Benchmate** *(generate & rank).* Paste a research goal, choose iterations,
-   run. Logs stream in; state downloads when finished.
-4. **Cross-check your hypotheses** *(trust the pick).* Correlate the Elo ranking
-   against independent quantitative models — AlphaGenome, Boltz, Open Targets,
-   DepMap, AlphaMissense. Low correlation flags hypotheses the leaderboard alone
-   shouldn't pick. An *"Is the ranking itself reliable?"* expander holds the
-   benchmark/eval suite (simulator, judge diagnostics, validate, fair-vs-naive,
-   ontology compare, discrimination + alias-dedup) — trust the *machinery* as well
-   as the *output*.
-5. **Experiment** *(run it + feed back).* Four sub-tabs: **Design** (a hypothesis
-   → a runnable alamarBlue design + the reagents to pull), **Execute** (reconcile
-   those reagents against your freezer — have / where / missing), **Results &
-   feedback** (log a rig CSV → viability + audit → refine the hypothesis and send
-   it back to Design), and **Reagent inventory** (upload a CryoVision box map or a
-   plain reagent list in CSV/Excel; this is what Execute checks against).
+1. **Start here** — type a research question; a small LLM call turns it into a
+   plan (which genes to perturb, in which cell context, which cross-check models
+   fit) and pre-fills the other tabs for you.
+2. **Add evidence** — type gene symbols, pick a cell context. Resolves to Ensembl
+   IDs via mygene, generates a parameterised Colab notebook, returns an "Open in
+   Colab" link. Cached perturbations live in the sidebar. (Your own data feeds the
+   agents here; the external models stay independent — see tab 4.)
+3. **Generate & rank** — paste a research goal, choose iterations, run. Seven
+   agents propose and argue; an Elo tournament ranks them. Results persist.
+4. **Stress-test** — correlate the Elo ranking against independent quantitative
+   models (AlphaGenome, Boltz, Open Targets, DepMap, AlphaMissense). Low
+   correlation flags hypotheses the leaderboard alone shouldn't pick. An
+   *"Is the ranking itself reliable?"* expander holds the benchmark/eval suite —
+   trust the *machinery* as well as the *output*.
+5. **Run experiment** — four sub-tabs: **Design** (a hypothesis → a runnable
+   alamarBlue design + the reagents to pull), **Execute** (reconcile those
+   reagents against your freezer — have / where / missing), **Results & feedback**
+   (log a rig CSV → viability + audit → refine the hypothesis and send it back to
+   Design), and **Reagent inventory** (upload a CryoVision box map or a plain
+   reagent list in CSV/Excel; this is what Execute checks against). This step
+   loops back into step 3 — a bench result re-ranks the ideas.
 6. **About.** What Benchmate is, links, and the Substack series.
 
 ## The Geneformer integration
