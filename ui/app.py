@@ -89,40 +89,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── The loop, always visible: what each step does to your hypothesis ──
-_STEPS = [
-    ("1", "Start here", "Turn a question into a plan"),
-    ("2", "Add evidence", "Ground it in your own data"),
-    ("3", "Generate &amp; rank", "Agents propose; Elo ranks"),
-    ("4", "Stress-test", "Do other models agree?"),
-    ("5", "Run experiment", "Bench it &rarr; feed back to 3"),
-]
-st.markdown(
-    "<div style='display:grid;grid-template-columns:repeat(5,minmax(0,1fr));"
-    "gap:10px;margin:6px 0 2px;'>"
-    + "".join(
-        f"<div style='border-top:2px solid {'#111' if n=='1' else '#e2e2e2'};"
-        f"padding-top:8px;'>"
-        f"<div style='font-size:11px;color:#999;margin-bottom:2px;'>{n}</div>"
-        f"<div style='font-size:13px;font-weight:600;color:#111;"
-        f"margin-bottom:2px;'>{t}</div>"
-        f"<div style='font-size:11.5px;color:#666;line-height:1.45;'>{d}</div>"
-        f"</div>"
-        for n, t, d in _STEPS)
-    + "</div>"
-    "<div style='font-size:11.5px;color:#999;margin:6px 0 14px;'>"
-    "&#8635; Step 5 loops back into step 3 — a bench result re-ranks the ideas."
-    "</div>",
-    unsafe_allow_html=True,
-)
+st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
 
-def step_intro(text: str):
-    """One line at the top of a tab: what this step does to your hypothesis."""
+def step_intro(text: str, step: str = "", nxt: str = ""):
+    """The description shown when you open a tab: what this step does to your
+    hypothesis, and where it leads. Replaces a header banner — the explanation
+    lives where the work is, so nothing looks clickable that isn't."""
+    head = f"Step {step} · " if step else ""
+    tail = (f"<div style='margin-top:6px;color:#888;'>&rarr; Next: {nxt}</div>"
+            if nxt else "")
     st.markdown(
-        f"<div style='background:#f4f4f3;border-radius:8px;padding:10px 12px;"
+        f"<div style='background:#f4f4f3;border-radius:8px;padding:11px 13px;"
         f"font-size:12.5px;color:#555;margin-bottom:14px;'>"
-        f"<b style='color:#111;'>What this step does:</b> {text}</div>",
+        f"<b style='color:#111;'>{head}What this does:</b> {text}{tail}</div>",
         unsafe_allow_html=True,
     )
 
@@ -379,7 +359,7 @@ def _project_context() -> str:
 
 # ── Tab 0 — guided flow ──────────────────────────────────────
 with tab0:
-    step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against.")
+    step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against — then pre-fills the other tabs.", "1 of 5", "Add evidence")
     benchmate_anchor("start", "*turn my question into a plan* · *what should I perturb?*")
     st.header("Start here — from question to cross-checked hypotheses")
     st.write(
@@ -484,7 +464,7 @@ with tab0:
 
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
-    step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench, not just the literature.")
+    step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench, not just the literature.", "2 of 5", "Generate &amp; rank")
     benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
     st.header("Add genes to the perturbation cache")
     st.write(
@@ -569,7 +549,7 @@ with tab1:
 
 # ── Tab 2 — Run Benchmate ────────────────────────────────────
 with tab2:
-    step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them so you get a shortlist, not a wall of text.")
+    step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Stress-test")
     benchmate_anchor("leaderboard", "*what's my top hypothesis?* · *why did CB-5083 drop?*")
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
@@ -1243,7 +1223,7 @@ def _benchmark_section():
 
 # ── Tab 3 — Cross-check your hypotheses ──────────────────────
 with tab3:
-    step_intro("your hypothesis has a rank &mdash; now find out whether five independent models back it, and whether the ranking itself is reliable.")
+    step_intro("your hypothesis has a rank &mdash; now find out whether five independent models back it, and whether the ranking itself is reliable.", "4 of 5", "Run experiment")
     benchmate_anchor("crosscheck", "*summarise the cross-checks* · *does the panel back the top idea?*")
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
@@ -1571,7 +1551,7 @@ with tab5:
 
 # ── Tab 4 — Experiment (design → execute → results → inventory) ─
 with tab4:
-    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and feeds the result back to re-rank the ideas.")
+    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "loops back to step 3 &mdash; the bench result re-ranks the ideas")
     benchmate_anchor("experiment", "*design an experiment for the top idea* · *where is kifunensine?* · *do I have everything?*")
     st.header("Experiment — design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
