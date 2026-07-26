@@ -1591,6 +1591,17 @@ with tab4:
     # ---------- 1. Design the experiment ----------
     with d_tab:
         st.text_area("Hypothesis to test", key="loop_hyp", height=90)
+        _ev_preview = ""
+        try:
+            from co_scientist import experiment as _exp0
+            _ev_preview = _exp0.project_evidence()
+        except Exception:
+            pass
+        if _ev_preview:
+            with st.expander("What the designer will take into account", expanded=False):
+                st.caption("Pulled live from your leaderboard, the cross-check "
+                           "models, and any bench results on record.")
+                st.code(_ev_preview)
         if not have_key:
             st.info("Add your Anthropic API key in the sidebar to design an experiment.")
         if st.button("Design an alamarBlue experiment", type="primary",
@@ -1598,8 +1609,10 @@ with tab4:
             from co_scientist import experiment as _exp
             with st.spinner("Designing the cleanest test…"):
                 try:
+                    ev = _exp.project_evidence()
+                    st.session_state.loop_evidence = ev
                     st.session_state.loop_design = _exp.design_experiment(
-                        st.session_state.loop_hyp)
+                        st.session_state.loop_hyp, ev)
                 except Exception as ex:
                     st.error(f"Design failed: {ex}")
         d = st.session_state.get("loop_design")

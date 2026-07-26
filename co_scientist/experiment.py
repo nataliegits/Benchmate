@@ -27,12 +27,80 @@ RIG_CAPABILITY = (
 )
 
 
-def design_experiment(hypothesis: str) -> dict:
+def project_evidence() -> str:
+    """Everything the project already knows, as a short prompt block: where the
+    hypothesis sits on the leaderboard, what the independent models said about
+    it, and any bench results on record.
+
+    This is what makes the design step *informed* — without it the designer only
+    sees a sentence of text and can't know that, say, three external models
+    disagree with the idea it's about to test.
+    """
+    import json
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent.parent
+    bits = []
+
+    st = repo / "state.json"
+    if st.exists():
+        try:
+            hyps = sorted(json.loads(st.read_text()).get("hypotheses", []),
+                          key=lambda h: h.get("elo", 0), reverse=True)[:3]
+            if hyps:
+                bits.append("Leaderboard (Elo):\n" + "\n".join(
+                    f"  {round(h.get('elo', 0))} — {h.get('statement','')[:110]}"
+                    for h in hyps))
+        except Exception:
+            pass
+
+    xc = []
+    for name, label in (("variant", "AlphaGenome (regulatory)"),
+                        ("boltz", "Boltz (binding)"),
+                        ("opentargets", "Open Targets (disease link)"),
+                        ("depmap", "DepMap (dependency)"),
+                        ("alphamissense", "AlphaMissense (pathogenicity)")):
+        f = repo / "benchmark" / f"{name}_scores.json"
+        if f.exists():
+            try:
+                rows = json.loads(f.read_text())
+                if rows:
+                    best = max(rows, key=lambda r: r.get("score", 0))
+                    xc.append(f"  {label}: highest-scoring = {best.get('label')} "
+                              f"({best.get('score'):.3g}), n={len(rows)}")
+            except Exception:
+                pass
+    if xc:
+        bits.append("Independent cross-check models on record:\n" + "\n".join(xc))
+
+    try:
+        from . import assay
+        recs = [assay.assay_evidence(l) for l in assay.available_assays()]
+        recs = [r for r in recs if r]
+        if recs:
+            bits.append("Bench results already on record:\n" + "\n".join(
+                f"  {r['drug']} on {r['cell_line']} → {r['viability']['verdict']} "
+                f"({r['direction_for_benchmate']})" for r in recs))
+    except Exception:
+        pass
+
+    return "\n\n".join(bits)
+
+
+def design_experiment(hypothesis: str, evidence: str = "") -> dict:
     """Return a runnable alamarBlue design for `hypothesis` as a dict with keys:
     aim, cell_line, treatment, comparison, controls[], reagents_needed[],
-    readout, key_confound."""
+    readout, key_confound, limitation.
+
+    Pass `evidence` (see project_evidence()) so the design accounts for the
+    ranking, the cross-check models, and anything already run at the bench.
+    """
+    ev = (f"WHAT THE PROJECT ALREADY KNOWS — take this into account. If the "
+          f"independent models disagree with this hypothesis, say so plainly in "
+          f'"limitation" and design the comparison that would discriminate. '
+          f"Never repeat an experiment already on record:\n{evidence}\n\n"
+          if evidence.strip() else "")
     return call_json(
-        f"Hypothesis to test:\n{hypothesis}\n\n{RIG_CAPABILITY}\n\n"
+        f"Hypothesis to test:\n{hypothesis}\n\n{ev}{RIG_CAPABILITY}\n\n"
         "Design the cleanest alamarBlue experiment to test it.\n"
         "FORMAT RULES — follow exactly:\n"
         "- Every value is a PLAIN STRING (or a list of plain strings). No nested "
