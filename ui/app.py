@@ -97,11 +97,11 @@ def step_intro(text: str, step: str = "", nxt: str = ""):
     hypothesis, and where it leads. Replaces a header banner — the explanation
     lives where the work is, so nothing looks clickable that isn't."""
     head = f"Step {step} · " if step else ""
-    tail = (f"<div style='margin-top:6px;color:#888;'>&rarr; Next: {nxt}</div>"
-            if nxt else "")
+    tail = (f"<div style='margin-top:8px;font-size:14px;color:#777;'>"
+            f"&rarr; Next: {nxt}</div>" if nxt else "")
     st.markdown(
-        f"<div style='background:#f4f4f3;border-radius:8px;padding:11px 13px;"
-        f"font-size:12.5px;color:#555;margin-bottom:14px;'>"
+        f"<div style='background:#f4f4f3;border-radius:8px;padding:14px 16px;"
+        f"font-size:15.5px;line-height:1.55;color:#444;margin-bottom:16px;'>"
         f"<b style='color:#111;'>{head}What this does:</b> {text}{tail}</div>",
         unsafe_allow_html=True,
     )
@@ -261,6 +261,12 @@ def benchmate_anchor(where: str, suggestions: str = ""):
              else f"Ask Benchmate{f'  ({n})' if n else ''}")
 
     with st.expander(label, expanded=bool(pend)):
+        st.caption(
+            "This is the assistant, not a form. It can see your whole project — "
+            "the leaderboard, bench results, and freezer — so use it to *ask about* "
+            "or *steer* this step, in plain language. (The fields above are the "
+            "actual inputs.)"
+        )
         if suggestions:
             st.caption(f"Try: {suggestions}")
 
@@ -360,7 +366,6 @@ def _project_context() -> str:
 # ── Tab 0 — guided flow ──────────────────────────────────────
 with tab0:
     step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against — then pre-fills the other tabs.", "1 of 5", "Add evidence")
-    benchmate_anchor("start", "*turn my question into a plan* · *what should I perturb?*")
     st.header("Start here — from question to cross-checked hypotheses")
     st.write(
         "Type a research question. Benchmate reads it and lays out the exact "
@@ -462,10 +467,12 @@ with tab0:
             st.session_state.run_iterations = iters
             st.success("Both tabs filled. Work through them top to bottom.")
 
+    st.divider()
+    benchmate_anchor("start", "*focus on less-studied ERAD genes* · *why did you pick these genes?* · *suggest a sharper version of my question*")
+
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
     step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench, not just the literature.", "2 of 5", "Generate &amp; rank")
-    benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
     st.header("Add genes to the perturbation cache")
     st.write(
         "Enter the gene symbols you want to perturb and pick the cell "
@@ -547,10 +554,12 @@ with tab1:
                 "Drag those files into the Upload CSVs panel in the sidebar."
             )
 
+    st.divider()
+    benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
+
 # ── Tab 2 — Run Benchmate ────────────────────────────────────
 with tab2:
     step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Stress-test")
-    benchmate_anchor("leaderboard", "*what's my top hypothesis?* · *why did CB-5083 drop?*")
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
         "Research goal",
@@ -663,6 +672,9 @@ with tab2:
             state_file.read_text(),
             file_name="state.json",
         )
+
+    st.divider()
+    benchmate_anchor("leaderboard", "*summarise the top 3 for me* · *why did CB-5083 drop?* · *which of these is most novel?*")
 
 # ── Benchmark section (folded into "Cross-check your hypotheses") ────
 def _benchmark_section():
@@ -1224,7 +1236,6 @@ def _benchmark_section():
 # ── Tab 3 — Cross-check your hypotheses ──────────────────────
 with tab3:
     step_intro("your hypothesis has a rank &mdash; now find out whether five independent models back it, and whether the ranking itself is reliable.", "4 of 5", "Run experiment")
-    benchmate_anchor("crosscheck", "*summarise the cross-checks* · *does the panel back the top idea?*")
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
@@ -1445,6 +1456,9 @@ with tab3:
                    "a ranking you can trust in the first place?")
         _benchmark_section()
 
+    st.divider()
+    benchmate_anchor("crosscheck", "*does the panel back the top idea?* · *which judge disagrees most, and why?*")
+
 # ── Bench-assay panel (reused inside Experiment → Results) ───
 def _bench_assay_panel():
     st.write(
@@ -1522,7 +1536,6 @@ def _bench_assay_panel():
 # ── Tab 5 — About (kept last) ────────────────────────────────
 with tab5:
     step_intro("what Benchmate is, how the loop works, and where to read more.")
-    benchmate_anchor("about", "*what can you do?* · *how does the loop work?*")
     st.header("About Benchmate")
     st.markdown(
         "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
@@ -1549,10 +1562,12 @@ with tab5:
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
+    st.divider()
+    benchmate_anchor("about", "*what can you do?* · *how does the loop work?* · *where should I start?*")
+
 # ── Tab 4 — Experiment (design → execute → results → inventory) ─
 with tab4:
     step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "loops back to step 3 &mdash; the bench result re-ranks the ideas")
-    benchmate_anchor("experiment", "*design an experiment for the top idea* · *where is kifunensine?* · *do I have everything?*")
     st.header("Experiment — design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
                "the reagents → run it → feed the result back to sharpen the idea.")
@@ -1769,3 +1784,6 @@ with tab4:
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.caption("No matching reagents.")
+
+    st.divider()
+    benchmate_anchor("experiment", "*design an experiment for the top idea* · *where is kifunensine?* · *do I have everything?*")
