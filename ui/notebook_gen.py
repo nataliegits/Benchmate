@@ -244,6 +244,112 @@ def _build_download_cell(target_symbols: list[str]) -> list[str]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Dependency install — GENERATED, never taken from the template.
+# ---------------------------------------------------------------------------
+# Hardwired here on purpose. Geneformer + transformers 4.40 are from the
+# numpy<2 era while Colab ships numpy 2.x, so installing over a live session
+# leaves a half-swapped numpy (new Python files, old compiled
+# _multiarray_umath) and the notebook dies later with:
+#     AttributeError: module 'numpy._core._multiarray_umath'
+#                     has no attribute '_blas_supports_fpe'
+# Three things prevent it: ONE pip transaction, numpy pinned, and an automatic
+# runtime restart. Anyone downloading a notebook from Benchmate gets this —
+# it does not depend on the template file being correct.
+
+def _build_install_cell() -> list[str]:
+    return [
+        "# Dependency install — run this FIRST, once per session.\n",
+        "#\n",
+        "# The golden rule on Colab: NEVER let pip move numpy. Colab's stack\n",
+        "# (pandas, scipy, sklearn...) is compiled against whatever numpy ships in\n",
+        "# the image. Change numpy and you get one of these two failures:\n",
+        "#   * downgrade -> ValueError: numpy.dtype size changed ... Expected 96\n",
+        "#                  from C header, got 88 from PyObject\n",
+        "#   * half-swap -> AttributeError: '_multiarray_umath' has no attribute\n",
+        "#                  '_blas_supports_fpe'\n",
+        "# So we pin numpy to the version ALREADY installed via a pip constraints\n",
+        "# file, and let pip pick versions of everything else that fit around it.\n",
+        "\n",
+        "def _deps_ready():\n",
+        "    try:\n",
+        "        import numpy, pandas, geneformer, cellxgene_census  # noqa: F401\n",
+        "        return True\n",
+        "    except Exception:\n",
+        "        return False\n",
+        "\n",
+        "if _deps_ready():\n",
+        "    print('deps already installed — nothing to do.')\n",
+        "else:\n",
+        "    import numpy, subprocess, sys\n",
+        "    # freeze numpy at the version Colab already has\n",
+        "    with open('/tmp/constraints.txt', 'w') as f:\n",
+        "        f.write(f'numpy=={numpy.__version__}\\n')\n",
+        "    print(f'holding numpy at {numpy.__version__}')\n",
+        "    pkgs = ['transformers', 'tokenizers', 'peft', 'accelerate', 'datasets',\n",
+        "            'cellxgene-census', 'gseapy', 'loompy', 'mygene', 'tdigest',\n",
+        "            'anndata', 'pyarrow', 'seaborn', 'statsmodels', 'optuna']\n",
+        "    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',\n",
+        "                    '--no-cache-dir', '-c', '/tmp/constraints.txt', *pkgs],\n",
+        "                   check=False)\n",
+        "    # Geneformer with --no-deps so it can't drag numpy or torch around\n",
+        "    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',\n",
+        "                    '--no-cache-dir', '--no-deps',\n",
+        "                    'git+https://huggingface.co/ctheodoris/Geneformer'],\n",
+        "                   check=False)\n",
+        "    print('Installed. RESTARTING the runtime for a clean import state —')\n",
+        "    print('Colab will say the session crashed. That is expected.')\n",
+        "    print('When it returns, skip this cell and run the next one.')\n",
+        "    import IPython\n",
+        "    IPython.Application.instance().kernel.do_shutdown(True)\n",
+    ]
+
+
+def _build_verify_cell() -> list[str]:
+    """A fast smoke test so a broken environment fails HERE with a clear
+    message, instead of five cells later inside someone else's traceback."""
+    return [
+        "# Sanity check — confirms numpy wasn't disturbed and the stack imports.\n",
+        "import numpy, pandas\n",
+        "print('numpy  ', numpy.__version__)\n",
+        "print('pandas ', pandas.__version__)\n",
+        "try:\n",
+        "    numpy.zeros(3) + pandas.Series([1, 2, 3]).to_numpy()\n",
+        "    import geneformer, cellxgene_census, mygene  # noqa: F401\n",
+        "    print('OK — environment is consistent, carry on.')\n",
+        "except Exception as e:\n",
+        "    print('PROBLEM:', type(e).__name__, e)\n",
+        "    print('Fix: Runtime > Disconnect and delete runtime, then run the\\n'\n",
+        "          'setup cell again from a fresh session.')\n",
+    ]
+
+
+def _is_install_cell(src: str) -> bool:
+    """A pip cell that touches the heavy ML stack (not a stray one-liner)."""
+    return ("pip" in src and any(k in src.lower() for k in
+            ("geneformer", "transformers", "cellxgene")))
+
+
+def _neutralise_stray_installs(nb: dict) -> int:
+    """Later `!pip install -q ...` cells can re-resolve numpy mid-run and undo
+    the pin. Everything they ask for is already in the install cell, so replace
+    them with a no-op note. Returns how many were neutralised."""
+    n = 0
+    for cell in nb.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "pip install" in src and not _is_install_cell(src):
+            cell["source"] = [
+                "# (installs handled in the setup cell at the top — nothing to do here,\n",
+                "#  re-running pip mid-session can unpin numpy and break Geneformer)\n",
+            ]
+            cell["outputs"] = []
+            cell["execution_count"] = None
+            n += 1
+    return n
+
+
 def generate_notebook(symbols: Iterable[str],
                       preset_name: str = "Ciliated cells",
                       out_dir: Path | None = None) -> tuple[Path, dict[str, str]]:
@@ -274,6 +380,36 @@ def generate_notebook(symbols: Iterable[str],
     #   - the first markdown cell (intro) -> intro_md
     #   - the cell containing `cellxgene_census.open_soma(` -> cellxgene_src
     #   - the cell containing `TARGETS = {` -> target_lines
+    # Force the install cell in, whatever the template says. If the template
+    # has one we overwrite it; if it doesn't, we insert one at the top.
+    install_src = _build_install_cell()
+    install_done = False
+    for cell in nb["cells"]:
+        if cell.get("cell_type") == "code" and _is_install_cell(
+                "".join(cell.get("source", []))):
+            cell["source"] = install_src
+            cell["outputs"] = []
+            cell["execution_count"] = None
+            install_done = True
+            break
+    if not install_done:
+        first_code = next((i for i, c in enumerate(nb["cells"])
+                           if c.get("cell_type") == "code"), 0)
+        nb["cells"].insert(first_code, {
+            "cell_type": "code", "execution_count": None,
+            "metadata": {}, "outputs": [], "source": install_src})
+    _neutralise_stray_installs(nb)
+
+    # a verify cell immediately after the install cell
+    if not any("environment is consistent" in "".join(c.get("source", []))
+               for c in nb["cells"]):
+        idx = next((i for i, c in enumerate(nb["cells"])
+                    if c.get("cell_type") == "code"
+                    and "_deps_ready" in "".join(c.get("source", []))), 0)
+        nb["cells"].insert(idx + 1, {
+            "cell_type": "code", "execution_count": None,
+            "metadata": {}, "outputs": [], "source": _build_verify_cell()})
+
     replaced = {"intro": False, "cellxgene": False, "targets": False}
     for cell in nb["cells"]:
         src = "".join(cell.get("source", []))
