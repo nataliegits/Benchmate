@@ -38,32 +38,57 @@ def _addendum(state: CoScientistState) -> str:
     return crit.as_prompt_addendum() if crit else ""
 
 
-def _geneformer_context_for(text: str, top_n: int = 10) -> str:
-    """Find genes mentioned in `text` that we have cached perturbation data for,
-    and format their top affected genes as a prompt-ready evidence block.
+MAX_UNPROMPTED_GENES = 6      # above this, list names instead of full blocks
 
-    Returns "" if no relevant genes are mentioned or no data is available.
+
+def _gf_block(sym: str, top_n: int) -> str:
+    r = geneformer_neighbors(sym, top_n=top_n)
+    if "error" in r or not r.get("affected_genes"):
+        return ""
+    lines = [
+        f"  {ag['symbol']:>10}  Δcos={ag['cosine_shift']:.3f}  N={ag['n_detections']}"
+        for ag in r["affected_genes"]
+    ]
+    return (f"In-silico KO of {sym} — top {len(lines)} affected genes "
+            f"(Δcos = predicted embedding shift, larger = bigger effect):\n"
+            + "\n".join(lines))
+
+
+def _geneformer_context_for(text: str, top_n: int = 10) -> str:
+    """Cached perturbation evidence, as a prompt-ready block.
+
+    Genes NAMED in `text` get their full affected-gene table. But the cache is
+    also *always advertised*, because a goal like "what ERAD-pathway genes drive
+    bortezomib resistance?" is obviously about SYVN1/MARCHF6/TXNDC15 without
+    ever spelling them out — and the old literal-match-only behaviour silently
+    ignored the user's own data in exactly that case.
+
+    So: mentioned genes → full tables; the rest of the cache → a shorter table
+    each (small caches) or just the names (large ones), clearly labelled as
+    available-but-unrequested so the agent can use them if they're relevant.
     """
     available = available_geneformer_genes()
     if not available:
         return ""
+
     mentioned = [g for g in available if re.search(rf"\b{re.escape(g)}\b", text)]
-    if not mentioned:
-        return ""
-    blocks = []
-    for sym in mentioned:
-        r = geneformer_neighbors(sym, top_n=top_n)
-        if "error" in r or not r.get("affected_genes"):
-            continue
-        lines = [
-            f"  {ag['symbol']:>10}  Δcos={ag['cosine_shift']:.3f}  N={ag['n_detections']}"
-            for ag in r["affected_genes"]
-        ]
-        blocks.append(
-            f"In-silico KO of {sym} — top {len(lines)} affected genes "
-            f"(Δcos = predicted embedding shift, larger = bigger effect):\n"
-            + "\n".join(lines)
-        )
+    others = [g for g in available if g not in mentioned]
+
+    blocks = [b for b in (_gf_block(s, top_n) for s in mentioned) if b]
+
+    if others:
+        if len(others) <= MAX_UNPROMPTED_GENES:
+            extra = [b for b in (_gf_block(s, 5) for s in others) if b]
+            if extra:
+                blocks.append(
+                    "ALSO IN THE CACHE — the user has run these perturbations "
+                    "too. They were not named in the text above, but use them if "
+                    "they bear on the question:\n\n" + "\n\n".join(extra))
+        else:
+            blocks.append(
+                "ALSO IN THE CACHE (not named above, but available as evidence "
+                "if relevant): " + ", ".join(others))
+
     return "\n\n".join(blocks)
 
 

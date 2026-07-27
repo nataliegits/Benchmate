@@ -443,9 +443,18 @@ with tab0:
                 "propose hypotheses and rank them by Elo."
             )
             if st.button("Prefill the Run Benchmate tab", key="sh_fill2"):
-                st.session_state.goal = question
+                # Name the planned genes in the goal. The agents match cached
+                # perturbation data by gene symbol, so a goal phrased as
+                # "what ERAD-pathway genes..." would otherwise never surface
+                # the very data this plan just picked.
+                goal_text = question
+                if genes:
+                    goal_text += ("\n\nFocus genes (perturbation data available): "
+                                  + ", ".join(genes) + ".")
+                st.session_state.goal = goal_text
                 st.session_state.run_iterations = iters
-                st.success("Filled. Open the Run Benchmate tab above.")
+                st.success("Filled — including your focus genes, so the run "
+                           "picks up their perturbation data.")
 
         with st.container(border=True):
             st.markdown("**3 · Cross-check the winners**  —  Cross-check tab")
@@ -463,7 +472,11 @@ with tab0:
         if st.button("Prefill steps 1 & 2", key="sh_fill_all"):
             st.session_state.genes_in = ", ".join(genes)
             st.session_state.preset_name = cell
-            st.session_state.goal = question
+            goal_text = question
+            if genes:
+                goal_text += ("\n\nFocus genes (perturbation data available): "
+                              + ", ".join(genes) + ".")
+            st.session_state.goal = goal_text
             st.session_state.run_iterations = iters
             st.success("Both tabs filled. Work through them top to bottom.")
 
