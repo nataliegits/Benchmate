@@ -167,9 +167,9 @@ def _build_intro_md(targets: dict[str, str], preset_name: str, preset: dict) -> 
         "1. Pulls cells matching the chosen context from CELLxGENE Census.\n",
         "2. Tokenises them for Geneformer.\n",
         "3. Runs in-silico KO perturbation on each target.\n",
-        "4. Aggregates per-gene shifts, computes pairwise and N-way "
+        "4. Aggregates each perturbation into a per-gene result table.\n"
         "intersections.\n",
-        "5. Runs Enrichr (GO / Reactome / KEGG) on per-perturbation top hits "
+        "5. Writes one {GENE}_stats.csv per target and downloads it for Benchmate.\n"
         "and on intersections.\n",
         "\n",
         "**Caveat.** Geneformer's in-silico KO is a learned embedding shift, "
@@ -221,26 +221,104 @@ def _build_cellxgene_cell(preset: dict) -> list[str]:
 
 
 def _build_download_cell(target_symbols: list[str]) -> list[str]:
-    """Final cell that triggers a browser download of each *_stats.csv.
+    """Final cell: normalise each perturbation result into a Benchmate-ready
+    CSV and download it.
 
-    Eliminates the Google Drive round-trip: the user gets the CSVs straight
-    onto their Mac and uploads them into Benchmate via the Streamlit widget.
+    Benchmate's cache is strict about two things — the filename must be
+    `{SYMBOL}_stats.csv` (that IS the index) and the columns must include
+    Affected_Ensembl_ID / Affected_gene_name / Cosine_sim_mean / N_Detections.
+    So rather than trusting the path, we locate whatever the stats step wrote,
+    check the columns, write a clean copy, and say plainly whether each gene is
+    good to upload.
     """
     return [
-        "# Auto-download perturbation CSVs to your machine.\n",
-        "# Upload them via Benchmate's 'Upload CSVs' panel afterwards.\n",
-        "from google.colab import files\n",
-        "import os\n",
+        "# ---- Export for Benchmate -------------------------------------------\n",
+        "# Writes one {GENE}_stats.csv per target, checks it has the columns\n",
+        "# Benchmate needs, and downloads it to your machine.\n",
+        "import os, glob, shutil\n",
+        "import pandas as pd\n",
         "\n",
         f"DOWNLOAD_TARGETS = {target_symbols}\n",
+        "EXPORT_DIR = '/content/benchmate_export'\n",
+        "os.makedirs(EXPORT_DIR, exist_ok=True)\n",
+        "\n",
+        "# symbol lookup, in case the stats file only carries Ensembl IDs\n",
+        "try:\n",
+        "    ens_to_sym = dict(zip(adata.var['feature_id'], adata.var['feature_name']))\n",
+        "except Exception:\n",
+        "    ens_to_sym = {}\n",
+        "\n",
+        "REQUIRED = ['Affected_Ensembl_ID', 'Cosine_sim_mean']\n",
+        "NICE     = ['Affected_gene_name', 'N_Detections']\n",
+        "\n",
+        "def find_stats_csv(sym):\n",
+        "    \"\"\"Exact path first, then glob — the stats step names files itself.\"\"\"\n",
+        "    exact = f'{PERTURB_OUT}/{sym}/{sym}_stats.csv'\n",
+        "    if os.path.exists(exact):\n",
+        "        return exact\n",
+        "    hits = glob.glob(f'{PERTURB_OUT}/{sym}/*.csv')\n",
+        "    return hits[0] if hits else None\n",
+        "\n",
+        "ready, problems = [], []\n",
         "for sym in DOWNLOAD_TARGETS:\n",
-        "    csv_path = f\"{PERTURB_OUT}/{sym}/{sym}_stats.csv\"\n",
-        "    if os.path.exists(csv_path):\n",
-        "        print(f\"Downloading {sym}_stats.csv\")\n",
-        "        files.download(csv_path)\n",
-        "    else:\n",
-        "        print(f\"NOT FOUND: {csv_path} (perturbation may have errored)\")\n",
-        "print(\"\\nAll downloads triggered. Check your browser's Downloads folder.\")\n",
+        "    src = find_stats_csv(sym)\n",
+        "    if not src:\n",
+        "        problems.append((sym, 'no CSV found — did the perturbation finish?'))\n",
+        "        continue\n",
+        "    df = pd.read_csv(src)\n",
+        "    if 'Affected' in df.columns:\n",
+        "        df = df[df['Affected'] != 'cell_emb']\n",
+        "    missing = [c for c in REQUIRED if c not in df.columns]\n",
+        "    if missing:\n",
+        "        problems.append((sym, f'missing columns {missing}'))\n",
+        "        continue\n",
+        "    # add gene symbols if the stats file only has Ensembl IDs\n",
+        "    if 'Affected_gene_name' not in df.columns:\n",
+        "        try:\n",
+        "            df['Affected_gene_name'] = df['Affected_Ensembl_ID'].map(ens_to_sym)\n",
+        "        except Exception:\n",
+        "            df['Affected_gene_name'] = df['Affected_Ensembl_ID']\n",
+        "    if 'N_Detections' not in df.columns:\n",
+        "        df['N_Detections'] = 0\n",
+        "    df = df.dropna(subset=['Affected_Ensembl_ID'])\n",
+        "    df = df.sort_values('Cosine_sim_mean', ascending=True)\n",
+        "    out = f'{EXPORT_DIR}/{sym}_stats.csv'\n",
+        "    df.to_csv(out, index=False)\n",
+        "    top = df.iloc[0]['Affected_gene_name'] if len(df) else '-'\n",
+        "    ready.append((sym, out, len(df), top))\n",
+        "\n",
+        "print('Ready for Benchmate')\n",
+        "print('-' * 58)\n",
+        "for sym, out, n, top in ready:\n",
+        "    print(f'  {sym:>10}_stats.csv   {n:>5} rows   top hit: {top}')\n",
+        "for sym, why in problems:\n",
+        "    print(f'  {sym:>10}  SKIPPED — {why}')\n",
+        "\n",
+        "# keep a copy on Drive too, if it happens to be mounted\n",
+        "try:\n",
+        "    if os.path.isdir('/content/drive/MyDrive'):\n",
+        "        dst = '/content/drive/MyDrive/benchmate_export'\n",
+        "        os.makedirs(dst, exist_ok=True)\n",
+        "        for _, out, _, _ in ready:\n",
+        "            shutil.copy(out, dst)\n",
+        "        print(f'\\nAlso copied to {dst}')\n",
+        "except Exception:\n",
+        "    pass\n",
+        "\n",
+        "# download each one (Colab sometimes drops rapid-fire downloads, so pause)\n",
+        "try:\n",
+        "    from google.colab import files\n",
+        "    import time\n",
+        "    for _, out, _, _ in ready:\n",
+        "        files.download(out)\n",
+        "        time.sleep(1.5)\n",
+        "    print('\\nDownloads triggered — check your Downloads folder.')\n",
+        "except Exception as e:\n",
+        "    print(f'\\n(Auto-download unavailable: {e})')\n",
+        "    print(f'Grab them from the file browser at {EXPORT_DIR}')\n",
+        "\n",
+        "print('\\nNext: open Benchmate -> sidebar -> Upload CSVs, and drop these in.')\n",
+        "print('The filename IS the index, so keep the {GENE}_stats.csv names as-is.')\n",
     ]
 
 
@@ -286,9 +364,14 @@ def _build_install_cell() -> list[str]:
         "    with open('/tmp/constraints.txt', 'w') as f:\n",
         "        f.write(f'numpy=={numpy.__version__}\\n')\n",
         "    print(f'holding numpy at {numpy.__version__}')\n",
-        "    pkgs = ['transformers', 'tokenizers', 'peft', 'accelerate', 'datasets',\n",
-        "            'cellxgene-census', 'gseapy', 'loompy', 'mygene', 'tdigest',\n",
-        "            'anndata', 'pyarrow', 'seaborn', 'statsmodels', 'optuna']\n",
+        "    # transformers must stay on 4.x: Geneformer does\n",
+        "    #   from transformers import SpecialTokensMixin\n",
+        "    # which v5 removed from the top-level namespace. 4.44+ is also\n",
+        "    # numpy-2 compatible, so this plays nicely with the pin above.\n",
+        "    pkgs = ['transformers>=4.44,<5', 'tokenizers', 'peft',\n",
+        "            'accelerate', 'datasets<4', 'cellxgene-census',\n",
+        "            'loompy', 'mygene', 'tdigest', 'anndata', 'pyarrow',\n",
+        "            'seaborn', 'statsmodels', 'optuna']\n",
         "    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',\n",
         "                    '--no-cache-dir', '-c', '/tmp/constraints.txt', *pkgs],\n",
         "                   check=False)\n",
@@ -310,12 +393,28 @@ def _build_verify_cell() -> list[str]:
     message, instead of five cells later inside someone else's traceback."""
     return [
         "# Sanity check — confirms numpy wasn't disturbed and the stack imports.\n",
+        "#\n",
+        "# Also disables one landmine: HuggingFace `datasets` does\n",
+        "#     from torchvision.io import VideoReader\n",
+        "# when it thinks torchvision is present, and current torchvision no\n",
+        "# longer exports VideoReader — which blows up mid-perturbation. We\n",
+        "# never touch video, so switch that path off.\n",
+        "try:\n",
+        "    import datasets.config\n",
+        "    datasets.config.TORCHVISION_AVAILABLE = False\n",
+        "except Exception:\n",
+        "    pass\n",
+        "\n",
         "import numpy, pandas\n",
         "print('numpy  ', numpy.__version__)\n",
         "print('pandas ', pandas.__version__)\n",
         "try:\n",
         "    numpy.zeros(3) + pandas.Series([1, 2, 3]).to_numpy()\n",
-        "    import geneformer, cellxgene_census, mygene  # noqa: F401\n",
+        "    import transformers\n",
+        "    from transformers import SpecialTokensMixin  # v5 removed this\n",
+        "    from geneformer import TranscriptomeTokenizer  # the real test\n",
+        "    import cellxgene_census, mygene  # noqa: F401\n",
+        "    print('transformers', transformers.__version__)\n",
         "    print('OK — environment is consistent, carry on.')\n",
         "except Exception as e:\n",
         "    print('PROBLEM:', type(e).__name__, e)\n",
@@ -348,6 +447,290 @@ def _neutralise_stray_installs(nb: dict) -> int:
             cell["execution_count"] = None
             n += 1
     return n
+
+
+def _despecialise(nb: dict, targets: dict, preset_name: str, preset: dict) -> None:
+    """Strip the template's original study (ciliated cells / TXNDC15 / CiliaCarta)
+    out of every remaining cell.
+
+    The template was written for one specific experiment. Only three cells used
+    to be rewritten, so a generated notebook still said things like "Pull
+    ciliated cell types" and shipped a hard-coded CiliaCarta gene list — noise
+    for anyone studying something else. Here we rewrite the section headings to
+    plainly describe what each section DOES, retarget the paths, and generalise
+    the comparison cells to the user's own genes.
+    """
+    import re as _re
+    syms = list(targets)
+    primary = syms[0] if syms else "your gene"
+    others = syms[1:]
+    slug = _re.sub(r"[^a-z0-9]+", "_", preset_name.lower()).strip("_") or "run"
+
+    md = {
+        "CELLxGENE Census": (
+            "## 2. Pull cells from CELLxGENE Census\n\n"
+            f"Downloads a single-cell expression sample for the chosen cell "
+            f"context (**{preset_name}**) and keeps the genes Geneformer needs.\n"),
+        "## 4. Perturbation": (
+            "## 4. In-silico perturbation\n\n"
+            "Deletes each target gene in the model and measures how far every "
+            "other gene's embedding moves as a result.\n"),
+        "Stats + intersection": (
+            "## 5. Top affected genes per target\n\n"
+            "For each gene you perturbed, the genes whose embeddings moved most "
+            "— your ranked shortlist.\n"),
+        "Enrichment + explicit cilium overlap": (
+            "## 6. Pathway enrichment\n\n"
+            "Runs the top affected genes through Enrichr (GO / Reactome / KEGG), "
+            "then optionally checks overlap with a gene set you supply.\n"),
+        "## What to look for": (
+            "## What to look for\n\n"
+            f"- **Enrichment terms that match your hypothesis** for {primary} — "
+            "the pathway you expected shows up near the top.\n"
+            "- **A gene-specific signature** — affected genes unique to one "
+            "target, not shared by the others, point to a distinct mechanism.\n"
+            "- **A shared signature** across all targets usually means a common "
+            "pathway (or a batch/tissue artefact — check the controls).\n"
+            "- **Nothing enriched** is a real result too: the model may not "
+            "represent this biology in the chosen cell context.\n"),
+    }
+    # The first markdown cell is the title/intro — the generator writes it via
+    # _build_intro_md, so never let the section rules below overwrite it.
+    intro_i = next((i for i, c in enumerate(nb["cells"])
+                    if c.get("cell_type") == "markdown"), None)
+    if intro_i is not None:
+        isrc = "".join(nb["cells"][intro_i].get("source", []))
+        if _re.search(r"cilia|ciliat|axoneme|ependymal|hepatocyte|TXNDC15",
+                      isrc, _re.I):
+            nb["cells"][intro_i]["source"] = [
+                "# Geneformer in-silico perturbation\n\n",
+                f"**Targets:** {', '.join(syms)}  \n",
+                f"**Cell context:** {preset_name}\n\n",
+                "Deletes each gene in the model and reports which other genes "
+                "shift the most, then runs pathway enrichment on the result.\n",
+            ]
+
+    for i, cell in enumerate(nb["cells"]):
+        if cell.get("cell_type") != "markdown" or i == intro_i:
+            continue
+        src = "".join(cell.get("source", []))
+        for needle, replacement in md.items():
+            if needle in src:
+                cell["source"] = [replacement]
+                break
+
+    # Safety net: if any markdown still mentions the template's original study,
+    # keep the heading and drop the stale body rather than shipping it.
+    STALE = _re.compile(r"cilia|ciliat|ciliopath|axoneme|CiliaCarta|ependymal"
+                        r"|hepatocyte|TXNDC15", _re.I)
+    for i, cell in enumerate(nb["cells"]):
+        if cell.get("cell_type") != "markdown" or i == intro_i:
+            continue
+        src = "".join(cell.get("source", []))
+        if not STALE.search(src):
+            continue
+        heading = next((ln for ln in src.splitlines() if ln.startswith("#")), "")
+        keep = [ln for ln in src.splitlines()
+                if ln.strip() and not STALE.search(ln) and not ln.startswith("#")]
+        body = ("\n".join(keep[:2]) + "\n") if keep else ""
+        cell["source"] = [f"{heading}\n\n" if heading else "", body] if heading \
+            else [body or "\n"]
+
+    # --- code: retarget paths that carry the old study's name ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "benchmate_geneformer_cilia" in src or "/content/cilia_" in src:
+            src = src.replace("benchmate_geneformer_cilia",
+                              f"benchmate_geneformer_{slug}")
+            src = src.replace("/content/cilia_", "/content/gf_")
+            cell["source"] = src.splitlines(keepends=True)
+
+    # --- code: guard the perturbation cell against the torchvision/datasets clash
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "InSilicoPerturber" in src and "datasets.config" not in src:
+            cell["source"] = [
+                "# `datasets` imports torchvision's VideoReader when it thinks\n",
+                "# torchvision is installed; current torchvision dropped it. No video\n",
+                "# here, so turn that path off before perturbing.\n",
+                "try:\n",
+                "    import datasets.config\n",
+                "    datasets.config.TORCHVISION_AVAILABLE = False\n",
+                "except Exception:\n",
+                "    pass\n",
+                "\n",
+            ] + list(src.splitlines(keepends=True))
+
+    # --- code: stale TARGET_SYMBOLS list left in the preamble ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "TARGET_SYMBOLS" in src and "TARGETS" in src:
+            src = _re.sub(r"^\s*TARGET_SYMBOLS\s*=\s*\[[^\]]*\]\s*\n", "",
+                          src, flags=_re.M)
+            cell["source"] = src.splitlines(keepends=True)
+
+    # --- code: the tokenised copy was named after the old study ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "cilia" in src.lower():
+            # the tokeniser names its output after this prefix
+            src = (src.replace("cilia.h5ad", "data.h5ad")
+                      .replace('"cilia"', '"data"')
+                      .replace("cilia.dataset", "data.dataset"))
+            cell["source"] = src.splitlines(keepends=True)
+
+    # --- code: hard-coded 3-way intersection -> loop over the real targets ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "shared3" not in src:
+            continue
+        head = src.split("shared3")[0].rstrip() + "\n\n"
+        cell["source"] = list(head.splitlines(keepends=True)) + [
+            "# Top affected genes for each target — the shortlist you actually use.\n",
+            "for sym in TARGETS:\n",
+            "    df = tops[sym].head(15)\n",
+            "    print(f\"\\n=== {sym}: top {len(df)} affected genes ===\")\n",
+            "    for _, r in df.iterrows():\n",
+            "        shift = 1 - r['Cosine_sim_mean']\n",
+            "        print(f\"  {str(r.get('Affected_gene_name','?')):>12}  \"\n",
+            "              f\"shift={shift:.4f}  N={int(r.get('N_Detections', 0))}\")\n",
+        ]
+        cell["outputs"] = []
+        cell["execution_count"] = None
+
+    # --- code: enrich() calls naming the old genes ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "pair_txn_syvn" in src or "pair_txn_mar" in src:
+            src = _re.sub(r"^.*pair_txn_\w+.*\n", "", src, flags=_re.M)
+            cell["source"] = src.splitlines(keepends=True)
+
+    # --- code: the CiliaCarta block -> an optional user gene set ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        if "CILIA_GENES" not in "".join(cell.get("source", [])):
+            continue
+        cell["source"] = [
+            "# OPTIONAL: overlap with a gene set of your own.\n",
+            "# Put the symbols you care about here (a pathway, a screen hit list,\n",
+            "# a curated set) and each target is scored against it. Leave empty to skip.\n",
+            "MY_GENE_SET = set()   # e.g. {\"SEL1L\", \"EDEM1\", \"OS9\", \"DERL1\"}\n",
+            "\n",
+            "def gene_set_overlap(ens_ids, label):\n",
+            "    syms = {ens_to_sym.get(g, g) for g in ens_ids}\n",
+            "    hit = syms & MY_GENE_SET\n",
+            "    pct = 100 * len(hit) / max(len(syms), 1)\n",
+            "    print(f\"{label:>20}  : {len(hit):>3}/{len(syms)} overlap \"\n",
+            "          f\"({pct:.1f}%) -- {sorted(hit)}\")\n",
+            "    return hit\n",
+            "\n",
+            "if MY_GENE_SET:\n",
+            "    print('=== overlap with MY_GENE_SET ===')\n",
+            "    for sym in TARGETS:\n",
+            "        gene_set_overlap(tops[sym]['Affected_Ensembl_ID'], sym)\n",
+            "else:\n",
+            "    print('MY_GENE_SET is empty — skipping. Add symbols above to use this.')\n",
+        ]
+        cell["outputs"] = []
+        cell["execution_count"] = None
+
+    # --- code: the TXNDC15-vs-others comparison -> the user's own targets ---
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "txn_only" not in src and "TXNDC15_only" not in src:
+            continue
+        if len(syms) < 2:
+            cell["source"] = [
+                "# (gene-specific comparison needs 2+ targets — only one here)\n"]
+        else:
+            cell["source"] = [
+                "# What is each target doing that the others are NOT?\n",
+                "# Set-subtracts the other targets' affected genes, then enriches\n",
+                "# whatever is left — that residue is the gene-specific signature.\n",
+                "for sym in TARGETS:\n",
+                "    mine = set(tops[sym]['Affected_Ensembl_ID'])\n",
+                "    for other in TARGETS:\n",
+                "        if other != sym:\n",
+                "            mine -= set(tops[other]['Affected_Ensembl_ID'])\n",
+                "    print(f'\\n=== {sym}-specific: {len(mine)} genes ===')\n",
+                "    if mine:\n",
+                "        enrich(list(mine), f'{sym}_only')\n",
+            ]
+        cell["outputs"] = []
+        cell["execution_count"] = None
+
+
+    # --- drop the downstream analysis sections -------------------------------
+    # Benchmate does the interpretation. This notebook's only job is: run the
+    # perturbation, write the CSVs, hand them over. Per-gene printouts, pathway
+    # enrichment and "follow up" ideas just make it longer and give people more
+    # to debug, so they go.
+    DROP_CODE = ("load_stats", "import gseapy", "MY_GENE_SET", "CILIA_GENES",
+                 "top {len(df)} affected genes", "gene-specific signature",
+                 "shared_all", "txn_only", "cilium_overlap", "gene_set_overlap")
+    DROP_MD = ("## 6. Pathway enrichment", "Section 7", "## What to look for",
+               "## 5. Top affected genes", "Enrichment", "Follow Up")
+    keep = []
+    for cell in nb["cells"]:
+        src = "".join(cell.get("source", []))
+        if cell.get("cell_type") == "code" and any(m in src for m in DROP_CODE):
+            continue
+        if cell.get("cell_type") == "markdown" and any(m in src for m in DROP_MD):
+            continue
+        keep.append(cell)
+    nb["cells"] = keep
+
+    # the stats step is what WRITES the CSVs, so it stays — relabel it
+    for i, cell in enumerate(nb["cells"]):
+        if cell.get("cell_type") == "code" and \
+                "InSilicoPerturberStats" in "".join(cell.get("source", [])):
+            if i > 0 and nb["cells"][i - 1].get("cell_type") == "markdown":
+                nb["cells"][i - 1]["source"] = [
+                    "## 5. Write the per-gene result files\n\n"
+                    "Aggregates each perturbation into a `{GENE}_stats.csv`.\n"]
+            break
+
+
+
+    # Remove dead cells rather than leaving no-op placeholders behind.
+    nb["cells"] = [
+        c for c in nb["cells"]
+        if not (c.get("cell_type") == "code"
+                and "".join(c.get("source", [])).strip().startswith(
+                    "# (installs handled in the setup cell"))
+        and not (c.get("cell_type") == "code"
+                 and "".join(c.get("source", [])).strip().startswith("!pip show"))
+    ]
+
+    # Renumber the export heading so it follows the last real section.
+    nums = [int(mm.group(1)) for c in nb["cells"]
+            if c.get("cell_type") == "markdown"
+            for mm in [_re.match(r"##\s*(\d+)\.", "".join(c.get("source", [])))]
+            if mm and "Export" not in "".join(c.get("source", []))]
+    nxt = (max(nums) + 1) if nums else 5
+    for cell in nb["cells"]:
+        if cell.get("cell_type") == "markdown" and \
+                "Export for Benchmate" in "".join(cell.get("source", [])):
+            cell["source"] = [
+                f"## {nxt}. Export for Benchmate\n\n"
+                "Writes one `{GENE}_stats.csv` per target, checks it has the "
+                "columns Benchmate needs, and downloads it. Upload these in "
+                "Benchmate's sidebar under **Upload CSVs**.\n"]
 
 
 def generate_notebook(symbols: Iterable[str],
@@ -400,15 +783,24 @@ def generate_notebook(symbols: Iterable[str],
             "metadata": {}, "outputs": [], "source": install_src})
     _neutralise_stray_installs(nb)
 
-    # a verify cell immediately after the install cell
-    if not any("environment is consistent" in "".join(c.get("source", []))
-               for c in nb["cells"]):
+    # Verify cell: REPLACE any existing one (a template copy may be stale),
+    # otherwise insert a fresh one right after the install cell.
+    verify_src = _build_verify_cell()
+    existing = next((c for c in nb["cells"]
+                     if c.get("cell_type") == "code"
+                     and "environment is consistent" in "".join(c.get("source", []))),
+                    None)
+    if existing is not None:
+        existing["source"] = verify_src
+        existing["outputs"] = []
+        existing["execution_count"] = None
+    else:
         idx = next((i for i, c in enumerate(nb["cells"])
                     if c.get("cell_type") == "code"
                     and "_deps_ready" in "".join(c.get("source", []))), 0)
         nb["cells"].insert(idx + 1, {
             "cell_type": "code", "execution_count": None,
-            "metadata": {}, "outputs": [], "source": _build_verify_cell()})
+            "metadata": {}, "outputs": [], "source": verify_src})
 
     replaced = {"intro": False, "cellxgene": False, "targets": False}
     for cell in nb["cells"]:
@@ -434,6 +826,8 @@ def generate_notebook(symbols: Iterable[str],
             )
             replaced["targets"] = True
 
+    _despecialise(nb, targets, preset_name, preset)
+
     if not replaced["intro"]:
         raise RuntimeError("Template has no markdown cell to use as intro.")
     if not replaced["cellxgene"]:
@@ -441,7 +835,20 @@ def generate_notebook(symbols: Iterable[str],
     if not replaced["targets"]:
         raise RuntimeError("Template lacks a TARGETS = {...} cell.")
 
-    # Append an auto-download cell so the user gets CSVs without Drive
+    # Append the Benchmate export section (heading + cell)
+    # number this section after whatever the last real one turned out to be
+    _nums = [int(_m.group(1)) for _c in nb["cells"]
+             if _c.get("cell_type") == "markdown"
+             for _m in [re.match(r"##\s*(\d+)\.", "".join(_c.get("source", [])))]
+             if _m]
+    _next = (max(_nums) + 1) if _nums else 5
+    nb["cells"].append({
+        "cell_type": "markdown", "metadata": {},
+        "source": [f"## {_next}. Export for Benchmate\n\n"
+                   "Writes one `{GENE}_stats.csv` per target, verifies it has "
+                   "the columns Benchmate needs, and downloads it. Upload these "
+                   "in Benchmate's sidebar under **Upload CSVs**.\n"],
+    })
     nb["cells"].append({
         "cell_type": "code",
         "execution_count": None,
