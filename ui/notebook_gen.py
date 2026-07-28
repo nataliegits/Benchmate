@@ -122,8 +122,18 @@ def _cell_filter_clause(preset: dict) -> str:
     return " and ".join(parts)
 
 
+ENSG_RE = re.compile(r"^ENSG\d{11}$")
+
+
 def resolve_to_ensembl(symbols: Iterable[str]) -> dict[str, str]:
-    """Look up Ensembl gene IDs for each symbol via mygene."""
+    """Look up Ensembl gene IDs for each symbol via mygene.
+
+    Every ID is shape-checked against ENSG + 11 digits before it goes into a
+    notebook. A malformed ID would sail past Geneformer as "gene not found"
+    and quietly produce an empty result an hour later — and worse, a made-up
+    identifier in a notebook is fabricated biological data. Better to fail
+    here, loudly.
+    """
     mg = mygene.MyGeneInfo()
     out: dict[str, str] = {}
     for sym in symbols:
@@ -137,6 +147,11 @@ def resolve_to_ensembl(symbols: Iterable[str]) -> dict[str, str]:
                 eid = (ens.get("gene") if isinstance(ens, dict)
                        else ens[0]["gene"] if ens else None)
                 if eid:
+                    if not ENSG_RE.match(str(eid)):
+                        raise ValueError(
+                            f"mygene returned a malformed Ensembl ID for {sym}: "
+                            f"{eid!r}. Expected ENSG + 11 digits. Refusing to "
+                            f"write an unverified gene ID into a notebook.")
                     out[sym] = eid
                     break
     return out
@@ -167,10 +182,14 @@ def _build_intro_md(targets: dict[str, str], preset_name: str, preset: dict) -> 
         "1. Pulls cells matching the chosen context from CELLxGENE Census.\n",
         "2. Tokenises them for Geneformer.\n",
         "3. Runs in-silico KO perturbation on each target.\n",
-        "4. Aggregates each perturbation into a per-gene result table.\n"
-        "intersections.\n",
-        "5. Writes one {GENE}_stats.csv per target and downloads it for Benchmate.\n"
-        "and on intersections.\n",
+        "4. Aggregates each perturbation into a per-gene result table.\n",
+        "5. Writes one {GENE}_stats.csv per target and downloads it for Benchmate.\n",
+        "\n",
+        "## If your runtime disconnects\n",
+        "Everything is written to Google Drive as it goes, so you do not start "
+        "over. Re-run the mount cell and the setup cell, then re-run from the "
+        "perturbation cell down: it skips any gene already on Drive, and the "
+        "later cells recover their paths from disk.\n",
         "\n",
         "**Caveat.** Geneformer's in-silico KO is a learned embedding shift, "
         "not a simulation of biology. Treat outputs as ranked hypotheses for "
@@ -217,6 +236,13 @@ def _build_cellxgene_cell(preset: dict) -> list[str]:
         "RAW_PATH = f\"{OUT}/cells_raw.h5ad\"\n",
         "adata.write_h5ad(RAW_PATH)\n",
         "print(\"\\nsaved:\", RAW_PATH)\n",
+        "\n",
+        "# Persist the Ensembl -> symbol map to Drive. The export cell at the end\n",
+        "# needs it to label affected genes, and `adata` will not survive a Colab\n",
+        "# runtime restart. Reading it back from disk makes the export resumable.\n",
+        "SYMBOL_MAP = f\"{OUT}/gene_symbols.csv\"\n",
+        "adata.var[[\"feature_id\", \"feature_name\"]].to_csv(SYMBOL_MAP, index=False)\n",
+        "print(\"saved:\", SYMBOL_MAP)\n",
     ]
 
 
@@ -242,11 +268,37 @@ def _build_download_cell(target_symbols: list[str]) -> list[str]:
         "EXPORT_DIR = '/content/benchmate_export'\n",
         "os.makedirs(EXPORT_DIR, exist_ok=True)\n",
         "\n",
-        "# symbol lookup, in case the stats file only carries Ensembl IDs\n",
+        "# Resumable: if the Colab runtime restarted, PERTURB_OUT is gone from\n",
+        "# memory but the results are still on Drive. Recover it rather than\n",
+        "# failing with a NameError.\n",
         "try:\n",
-        "    ens_to_sym = dict(zip(adata.var['feature_id'], adata.var['feature_name']))\n",
-        "except Exception:\n",
-        "    ens_to_sym = {}\n",
+        "    PERTURB_OUT\n",
+        "except NameError:\n",
+        "    _c = sorted(glob.glob('/content/drive/MyDrive/*/perturbations'))\n",
+        "    if not _c:\n",
+        "        raise RuntimeError('No perturbations folder on Drive. Is Drive '\n",
+        "                           'mounted? Re-run the first cell.')\n",
+        "    PERTURB_OUT = _c[-1]\n",
+        "    print('recovered PERTURB_OUT =', PERTURB_OUT)\n",
+        "\n",
+        "# symbol lookup, in case the stats file only carries Ensembl IDs.\n",
+        "# Prefer the map saved to Drive — it survives a runtime restart, `adata`\n",
+        "# does not.\n",
+        "ens_to_sym = {}\n",
+        "for _p in glob.glob('/content/drive/MyDrive/*/gene_symbols.csv'):\n",
+        "    try:\n",
+        "        _m = pd.read_csv(_p)\n",
+        "        ens_to_sym = dict(zip(_m['feature_id'], _m['feature_name']))\n",
+        "        print(f'gene symbols from {_p} ({len(ens_to_sym)} genes)')\n",
+        "        break\n",
+        "    except Exception:\n",
+        "        pass\n",
+        "if not ens_to_sym:\n",
+        "    try:\n",
+        "        ens_to_sym = dict(zip(adata.var['feature_id'], adata.var['feature_name']))\n",
+        "    except Exception:\n",
+        "        print('No symbol map available — the gene-name column will hold '\n",
+        "              'Ensembl IDs. Benchmate still loads these fine.')\n",
         "\n",
         "REQUIRED = ['Affected_Ensembl_ID', 'Cosine_sim_mean']\n",
         "NICE     = ['Affected_gene_name', 'N_Detections']\n",
@@ -717,6 +769,8 @@ def _despecialise(nb: dict, targets: dict, preset_name: str, preset: dict) -> No
                  and "".join(c.get("source", [])).strip().startswith("!pip show"))
     ]
 
+    _make_resumable(nb)
+
     # Renumber the export heading so it follows the last real section.
     nums = [int(mm.group(1)) for c in nb["cells"]
             if c.get("cell_type") == "markdown"
@@ -731,6 +785,119 @@ def _despecialise(nb: dict, targets: dict, preset_name: str, preset: dict) -> No
                 "Writes one `{GENE}_stats.csv` per target, checks it has the "
                 "columns Benchmate needs, and downloads it. Upload these in "
                 "Benchmate's sidebar under **Upload CSVs**.\n"]
+
+
+_RESUME_PREAMBLE = [
+    "# Resumable: Colab recycles runtimes, and the variables from earlier cells\n",
+    "# go with them — but the results are on Drive. Recover what we need from\n",
+    "# disk instead of raising NameError halfway down the notebook.\n",
+    "import glob, os\n",
+    "try:\n",
+    "    PERTURB_OUT\n",
+    "except NameError:\n",
+    "    _c = sorted(glob.glob('/content/drive/MyDrive/*/perturbations'))\n",
+    "    if not _c:\n",
+    "        raise RuntimeError('No perturbations folder on Drive. Mount Drive '\n",
+    "                           '(first cell) and check the perturbation ran.')\n",
+    "    PERTURB_OUT = _c[-1]\n",
+    "    print('recovered PERTURB_OUT =', PERTURB_OUT)\n",
+    "try:\n",
+    "    TARGETS\n",
+    "except NameError:\n",
+    "    TARGETS = {os.path.basename(d): None\n",
+    "               for d in sorted(glob.glob(f'{PERTURB_OUT}/*')) if os.path.isdir(d)}\n",
+    "    print('recovered targets from disk:', list(TARGETS))\n",
+    "\n",
+]
+
+_RESUMABLE_LOOP = [
+    "import glob\n",
+    "\n",
+    "for sym, eid in TARGETS.items():\n",
+    "    # Skip anything already on Drive. Each gene costs minutes of GPU, so a\n",
+    "    # disconnect partway through should not mean starting over.\n",
+    "    done = glob.glob(f\"{PERTURB_OUT}/{sym}/*\")\n",
+    "    if done:\n",
+    "        print(f\"{sym}: already perturbed ({len(done)} file(s)) — skipping. \"\n",
+    "              f\"Delete that folder to force a re-run.\")\n",
+    "        continue\n",
+    "    print(f\"\\nPerturbing {sym} ({eid})...\")\n",
+    "    run_perturbation(sym, eid)\n",
+]
+
+
+def _make_resumable(nb: dict) -> None:
+    """Let the back half of the notebook survive a Colab runtime restart.
+
+    Two failure modes were hitting real users. First, a disconnect after the
+    perturbation meant re-running hours of GPU work to get the CSVs, because
+    the loop had no idea the results were already sitting on Drive. Second,
+    the stats and export cells referenced PERTURB_OUT / TARGETS from earlier
+    cells, so on a fresh runtime they died with NameError.
+    """
+    import glob as _glob  # noqa: F401  (kept for symmetry with emitted code)
+
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+
+        # the perturbation loop -> skip genes already written to Drive
+        if "InSilicoPerturber(" in src and "for sym, eid in TARGETS.items():" in src:
+            head = src.split("for sym, eid in TARGETS.items():")[0]
+            if "already perturbed" not in src:
+                cell["source"] = [
+                    ln + "\n" for ln in head.rstrip("\n").split("\n")
+                ] + ["\n"] + _RESUMABLE_LOOP
+                cell["outputs"] = []
+                cell["execution_count"] = None
+
+        # the stats cell -> recover PERTURB_OUT / TARGETS from disk
+        elif "InSilicoPerturberStats" in src and "recovered PERTURB_OUT" not in src:
+            cell["source"] = _RESUME_PREAMBLE + cell.get("source", [])
+            cell["outputs"] = []
+            cell["execution_count"] = None
+
+
+def _clear_outputs(nb: dict) -> None:
+    """Ship a clean notebook.
+
+    The template carries saved outputs from the original ciliated-cell run, and
+    any cell the generator doesn't rewrite keeps them. So a user would open a
+    brand-new notebook for their own genes and see stale results claiming
+    `Outputs -> .../benchmate_geneformer_cilia` and `ciliated cell  34505`
+    before running anything. Confusing at best; misleading at worst.
+    """
+    for cell in nb["cells"]:
+        if cell.get("cell_type") == "code":
+            cell["outputs"] = []
+            cell["execution_count"] = None
+
+
+def _validate_syntax(nb: dict) -> None:
+    """Refuse to write a notebook whose code cells don't parse.
+
+    Learned this the hard way: an earlier refresh pass left three template
+    cells uniformly indented by two spaces, so every generated notebook
+    carried an IndentationError that only showed up an hour in, at the
+    tokenise step. A parse check at generation time costs nothing.
+    """
+    for i, cell in enumerate(nb["cells"]):
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if not src.strip():
+            continue
+        # blank out IPython magics / shell escapes — not valid Python
+        clean = "\n".join("" if ln.strip().startswith(("!", "%")) else ln
+                          for ln in src.split("\n"))
+        try:
+            compile(clean, f"<cell {i}>", "exec")
+        except SyntaxError as e:
+            raise ValueError(
+                f"Generated notebook cell {i} is not valid Python "
+                f"({e.msg} at line {e.lineno}). Refusing to hand a broken "
+                f"notebook to the user.\n\n{src[:400]}") from e
 
 
 def generate_notebook(symbols: Iterable[str],
@@ -856,6 +1023,9 @@ def generate_notebook(symbols: Iterable[str],
         "outputs": [],
         "source": _build_download_cell(list(targets.keys())),
     })
+
+    _clear_outputs(nb)
+    _validate_syntax(nb)
 
     out_dir = out_dir or OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
