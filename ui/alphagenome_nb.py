@@ -25,6 +25,33 @@ REAL_COORDS = REPO / "benchmark" / "real_variant_coords.json"
 OUT_DIR = REPO / "notebooks" / "generated"
 
 
+def _variants_for_genes(genes: list[str]) -> tuple[list[dict], str]:
+    """Fetch a real eQTL for each of `genes`, live from GTEx.
+
+    This is the path that makes the notebook follow the user's actual question
+    rather than the built-in ERAD gold set. Nothing is invented: a gene with no
+    significant eQTL is dropped and named in the provenance line, because
+    AlphaGenome genuinely has nothing to score there.
+    """
+    from benchmark.fetch_eqtls import fetch_for_genes
+
+    coords, problems = fetch_for_genes(genes)
+    rows = [{"label": f"{sym}_eqtl", "gene": sym, "tier": "eQTL", **c}
+            for sym, c in coords.items()]
+    if not rows:
+        raise RuntimeError(
+            "GTEx returned no usable eQTL for any of these genes, so there's "
+            "nothing AlphaGenome can score.\n\n" + "\n".join(problems)
+            + "\n\nAlphaGenome scores regulatory variants. If your question is "
+              "about knockdowns or drug effects rather than variants, DepMap "
+              "and Open Targets are the right models — not this one.")
+    prov = (f"{len(rows)} variants, each the most significant GTEx eQTL "
+            f"(hg38) for a gene from your question")
+    if problems:
+        prov += f". No eQTL available for: {'; '.join(problems)}"
+    return rows, prov
+
+
 def _load_variants() -> tuple[list[dict], str]:
     """Real variants to score, plus a one-line provenance string.
 
@@ -74,21 +101,38 @@ def _variants_cell(rows: list[dict]) -> list[str]:
         lab = f"{r['label']!r},"
         chrom = f"{r['chrom']!r},"
         pos = f"{r['pos']},"
+        # carry the provenance inline: which SNP, which tissue, what p-value.
+        # Without it there's no way to tell a real eQTL from a typo later.
+        note = f"{r['tier']} · {r['gene']}"
+        if r.get("rsid"):
+            note += f" · {r['rsid']}"
+        if r.get("tissue"):
+            note += f" · {r['tissue']}"
+        if r.get("pvalue") is not None:
+            note += f" · p={r['pvalue']}"
         src.append(f"    dict(label={lab:<{w}} chrom={chrom:<10} "
                    f"pos={pos:<12} ref={r['ref']!r}, alt={r['alt']!r}),"
-                   f"  # tier {r['tier']} · {r['gene']}\n")
+                   f"  # {note}\n")
     src.append("]\n")
     src.append("print(f'{len(VARIANTS)} variants to score')\n")
     return src
 
 
-def generate_alphagenome_notebook(out_dir: Path | None = None
+def generate_alphagenome_notebook(genes: list[str] | None = None,
+                                  out_dir: Path | None = None
                                   ) -> tuple[Path, int]:
-    """Write a Colab-ready AlphaGenome notebook. Returns (path, n_variants)."""
+    """Write a Colab-ready AlphaGenome notebook. Returns (path, n_variants).
+
+    Pass `genes` (from the research question / Start here plan / the hypothesis
+    being cross-checked) and the notebook scores real GTEx eQTLs for those
+    genes. With no genes it falls back to the built-in ERAD gold set, which is
+    a benchmark, not your question.
+    """
     if not TEMPLATE.exists():
         raise FileNotFoundError(f"Template notebook missing: {TEMPLATE}")
 
-    rows, prov = _load_variants()
+    genes = [g for g in (genes or []) if str(g).strip()]
+    rows, prov = _variants_for_genes(genes) if genes else _load_variants()
     nb = json.loads(TEMPLATE.read_text())
 
     replaced = False
@@ -142,7 +186,9 @@ def generate_alphagenome_notebook(out_dir: Path | None = None
 
     out_dir = out_dir or OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"alphagenome_scoring_{uuid.uuid4().hex[:6]}.ipynb"
+    slug = ("_".join(r["gene"] for r in rows[:4]) if genes else "erad_goldset")
+    slug = re.sub(r"[^A-Za-z0-9_]+", "", slug) or "variants"
+    path = out_dir / f"alphagenome_{slug}_{uuid.uuid4().hex[:6]}.ipynb"
     path.write_text(json.dumps(nb, indent=1))
     return path, len(rows)
 

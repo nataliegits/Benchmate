@@ -59,6 +59,49 @@ def _parse_variant(variant_id: str) -> dict | None:
     return {"chrom": parts[0], "pos": int(parts[1]), "ref": parts[2], "alt": parts[3]}
 
 
+def fetch_for_genes(symbols, timeout: float = 30.0) -> tuple[dict, list[str]]:
+    """Top significant eQTL per gene symbol, straight from GTEx.
+
+    Returns ({SYMBOL: {chrom, pos, ref, alt, rsid, tissue, pvalue}}, problems).
+
+    This is the gene-agnostic version of main(): it takes whatever genes the
+    user's question is actually about instead of the fixed ERAD gold set. Genes
+    with no significant eQTL are reported in `problems` and simply left out —
+    the alternative would be inventing a coordinate, and a fabricated locus
+    scores as "no effect", which is indistinguishable from a real null result.
+    """
+    coords: dict[str, dict] = {}
+    problems: list[str] = []
+    with httpx.Client(timeout=timeout,
+                      headers={"Accept": "application/json"}) as client:
+        for sym in symbols:
+            sym = str(sym).strip().upper()
+            if not sym or sym in coords:
+                continue
+            try:
+                gid = _gencode_id(client, sym)
+                if not gid:
+                    problems.append(f"{sym}: not found in GTEx")
+                    continue
+                eqtl = _top_eqtl(client, gid)
+                if not eqtl:
+                    problems.append(f"{sym}: no significant eQTL in GTEx "
+                                    f"(nothing for AlphaGenome to score)")
+                    continue
+                v = _parse_variant(eqtl.get("variantId", ""))
+                if not v:
+                    problems.append(f"{sym}: unparseable variant id "
+                                    f"{eqtl.get('variantId')!r}")
+                    continue
+                v.update(rsid=eqtl.get("snpId"),
+                         tissue=eqtl.get("tissueSiteDetailId"),
+                         pvalue=eqtl.get("pValue"))
+                coords[sym] = v
+            except Exception as e:
+                problems.append(f"{sym}: GTEx error — {e}")
+    return coords, problems
+
+
 def main():
     coords = {}
     with httpx.Client(timeout=30.0, headers={"Accept": "application/json"}) as client:

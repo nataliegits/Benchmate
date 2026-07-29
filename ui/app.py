@@ -1464,11 +1464,43 @@ with tab3:
         st.caption("AlphaGenome scores whether a variant changes expression. It "
                    "needs a free API key and runs in Colab — Benchmate writes "
                    "the notebook, you run it, then upload the scores below.")
+
+        # Which genes? Prefer the ones your question is actually about. In
+        # order: the Start here plan's cross-check targets, the genes in the
+        # hypothesis selected above, then your perturbation cache.
+        _ag_genes: list[str] = []
+        for _x in (st.session_state.get("sh_crosscheck") or []):
+            _t = str(_x.get("target", "")).strip().upper()
+            if _t and _t not in _ag_genes:
+                _ag_genes.append(_t)
+        if not _ag_genes and st.session_state.get("xc_result"):
+            _ag_genes = list(st.session_state["xc_result"]["scan"]["genes"])
+        if not _ag_genes:
+            try:
+                _ag_genes = list(available_geneformer_genes())[:6]
+            except Exception:
+                pass
+
+        _src_label = ("your Start here plan" if st.session_state.get("sh_crosscheck")
+                      else "the hypothesis above" if st.session_state.get("xc_result")
+                      else "your perturbation cache" if _ag_genes
+                      else "nothing yet")
+        st.caption(f"Genes from **{_src_label}**. Edit freely — Benchmate looks "
+                   f"up a real GTEx eQTL for each one.")
+        _ag_txt = st.text_input("Genes to score (comma-separated)",
+                                value=", ".join(_ag_genes), key="ag_nb_genes")
+        _ag_list = [g.strip().upper() for g in _ag_txt.split(",") if g.strip()]
+        if not _ag_list:
+            st.caption("Leave this empty to fall back to the built-in ERAD "
+                       "benchmark set — useful for calibration, but it won't "
+                       "reflect your question.")
+
         _ag_written = st.session_state.get("ag_nb_path")
         if st.button("Write the notebook", key="ag_nb_btn"):
             try:
                 from ui.alphagenome_nb import generate_alphagenome_notebook
-                _p, _n = generate_alphagenome_notebook()
+                with st.spinner("Looking up real eQTLs in GTEx…"):
+                    _p, _n = generate_alphagenome_notebook(genes=_ag_list)
                 st.session_state["ag_nb_path"] = str(_p)
                 st.session_state["ag_nb_n"] = _n
                 _ag_written = str(_p)
