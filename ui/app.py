@@ -1367,11 +1367,17 @@ with tab3:
         st.info("From your Start here plan, check these:\n\n" + lines)
 
     # ---- Score one real hypothesis, live ------------------------------------
+    # One box per model. Each shows what it pulled out of your hypothesis, what
+    # question it answers, and its own run button — because a single combined
+    # button made four of the five models look broken when they were simply
+    # answering a different question or waiting on a key.
     from co_scientist import crosscheck as _xc
+    from co_scientist import hypothesis_scan as _hs
+    from co_scientist import target_scorer
 
     st.markdown("#### Score a hypothesis")
-    st.caption("Pick a hypothesis, hit the button. Benchmate finds the genes in "
-               "it and asks each model that applies — no files, no terminal.")
+    st.caption("Pick a hypothesis, then run whichever models apply. Each box "
+               "says what it needs and what it found.")
 
     _hyps: list[str] = []
     _sf = REPO_ROOT / "state.json"
@@ -1392,139 +1398,249 @@ with tab3:
         if st.session_state.get("_xc_last_pick") != _pick:
             st.session_state["xc_text"] = _pick
             st.session_state["_xc_last_pick"] = _pick
+            # a new hypothesis invalidates every model's result
+            for _k in ("xc_ot", "xc_dm", "xc_am"):
+                st.session_state.pop(_k, None)
     else:
         st.caption("No leaderboard yet — run **Generate & rank** first, or paste "
                    "a hypothesis below.")
     st.session_state.setdefault("xc_text", "")
     st.text_area("Hypothesis", key="xc_text", height=80)
 
-    _cd, _cb = st.columns([2, 1])
-    _disease = _cd.text_input("Disease context (for Open Targets)",
-                              value=_xc.DEFAULT_DISEASE, key="xc_disease")
-    with _cb:
-        st.write("")
-        st.write("")
-        _score_now = st.button("Score against the models", type="primary",
-                               key="xc_run")
+    _htext = st.session_state.get("xc_text", "")
+    _scan = _hs.scan(_htext) if _htext.strip() else {
+        "genes": [], "variants": [], "scoreable_variants": [], "notes": [],
+        "validated": True}
+    _genes = _scan["genes"]
 
-    if _score_now:
-        _txt = st.session_state.get("xc_text", "")
-        if not _txt.strip():
-            st.warning("Pick or paste a hypothesis first.")
-        else:
-            with st.spinner("Asking each model…"):
-                st.session_state["xc_result"] = _xc.score_hypothesis(
-                    _txt, disease=_disease)
-
-    _res = st.session_state.get("xc_result")
-    if _res:
-        _sc = _res["scan"]
-        st.markdown("**Found in the hypothesis:** "
-                    + (", ".join(f"`{g}`" for g in _sc["genes"]) or "_no genes_")
+    if _htext.strip():
+        st.markdown("**Pulled from this hypothesis:** "
+                    + (", ".join(f"`{g}`" for g in _genes) or "_no genes found_")
                     + (("  ·  variants: "
-                        + ", ".join(f"`{v['raw']}`" for v in _sc["variants"]))
-                       if _sc["variants"] else ""))
-        if not _sc.get("validated", True):
-            st.caption("⚠ Gene symbols matched by pattern only — the validator "
+                        + ", ".join(f"`{v['raw']}`" for v in _scan["variants"]))
+                       if _scan["variants"] else ""))
+        if not _scan.get("validated", True):
+            st.caption("⚠ Symbols matched by pattern only — the gene validator "
                        "was unreachable, so one may not be a real gene.")
+        if not _genes:
+            st.caption("Name the gene explicitly (e.g. `SEL1L`, not "
+                       "\"the ERAD receptor\") and these models can look it up.")
 
-        if _res["rows"]:
-            import pandas as pd
-            st.dataframe(
-                pd.DataFrame([{"Model": r["model"], "Target": r["target"],
-                               "Score": r["score"], "What it means": r["reading"],
-                               "Scale": r["scale"]} for r in _res["rows"]]),
-                use_container_width=True, hide_index=True)
-        st.info(_xc.verdict(_res))
+    def _score_table(rows):
+        import pandas as pd
+        st.dataframe(
+            pd.DataFrame([{"Target": r["target"], "Score": r["score"],
+                           "What it means": r["reading"]} for r in rows]),
+            use_container_width=True, hide_index=True)
 
-        _na = _res.get("not_applicable", [])
-        _need = _res.get("setup_needed", [])
-        if _na:
-            st.caption("Doesn't apply to this hypothesis: "
-                       + " · ".join(f"**{s['model']}**" for s in _na))
-            with st.expander("Why these don't apply"):
-                st.caption("Not a failure — these models answer questions this "
-                           "hypothesis doesn't ask.")
-                for s in _na:
-                    st.markdown(f"- **{s['model']}** — {s['why']}")
-        if _need:
-            with st.expander(f"{len(_need)} model(s) need one-time setup"):
-                for s in _need:
-                    st.markdown(f"- **{s['model']}** — {s['why']}")
-        for n in _sc.get("notes", []):
-            st.caption(n)
+    # ---------------- Open Targets ----------------
+    with st.container(border=True):
+        st.markdown("**Open Targets** — *is this gene actually linked to the "
+                    "disease?*")
+        st.caption("Public API · nothing to install · genetics, literature and "
+                   "known drugs, aggregated into one 0–1 association score.")
+        _c1, _c2 = st.columns([2, 1])
+        _dis = _c1.text_input("Disease", value=_xc.DEFAULT_DISEASE,
+                              key="xc_disease", label_visibility="collapsed",
+                              placeholder="disease, e.g. multiple myeloma")
+        with _c2:
+            _run_ot = st.button("Run Open Targets", key="xc_ot_btn",
+                                disabled=not _genes, use_container_width=True)
+        if _run_ot:
+            with st.spinner("Asking Open Targets…"):
+                _rows, _probs = [], []
+                for _g in _genes:
+                    _v = target_scorer.opentargets_score(_g, _dis)
+                    if _v is None:
+                        _probs.append(f"{_g}: didn't resolve, or the API errored.")
+                    else:
+                        _rows.append({"target": _g, "score": round(_v, 3),
+                                      "reading": _xc.read_opentargets(_v)})
+                st.session_state["xc_ot"] = {"rows": _rows, "problems": _probs}
+        _r = st.session_state.get("xc_ot")
+        if _r:
+            if _r["rows"]:
+                _score_table(_r["rows"])
+                st.caption("0–1, higher = stronger evidence the gene is involved "
+                           "in this disease. 0.0 means resolved cleanly with "
+                           "nothing on record.")
+            for _p in _r["problems"]:
+                st.caption(f"⚠ {_p}")
+        elif not _genes:
+            st.caption("Waiting on a gene from the hypothesis above.")
 
-    # ---- What's set up, and what each model needs ---------------------------
-    with st.expander("The five models — what each needs to run"):
-        st.caption("Only DepMap needs a download, and it's a browser download. "
-                   "Nothing here requires the terminal.")
-        _WHERE = {"live": "runs in the app", "file": "needs one data file",
-                  "colab": "runs in Colab", "key": "needs a paid key"}
-        for m in _xc.model_status():
-            _mark = "✅" if m["available"] else "○"
-            st.markdown(f"**{_mark} {m['model']}** — *{m['asks']}*  \n"
-                        f"{_WHERE.get(m['where'], m['where'])} · {m['setup']}")
-            if m.get("caveat"):
-                st.warning(m["caveat"])
+    # ---------------- DepMap ----------------
+    with st.container(border=True):
+        st.markdown("**DepMap** — *do cancer cells actually need this gene to "
+                    "survive?*")
+        _dm_ok = target_scorer.depmap_available()
+        if _dm_ok:
+            _lineage = target_scorer.DEPMAP_LINEAGE
+            _has_model = target_scorer.DEPMAP_MODEL_CSV.exists()
+            st.caption(f"Local CRISPR knockout matrix · "
+                       + (f"restricted to {_lineage} cell lines"
+                          if _has_model else
+                          "averaged over ALL cancer lines (add Model.csv to "
+                          "restrict to " + _lineage + ")"))
+            if st.button("Run DepMap", key="xc_dm_btn", disabled=not _genes):
+                with st.spinner("Reading the CRISPR matrix…"):
+                    _rows, _probs = [], []
+                    for _g in _genes:
+                        _v = target_scorer.depmap_score(_g)
+                        if _v is None:
+                            _probs.append(f"{_g}: not in the CRISPR matrix.")
+                        else:
+                            _rows.append({"target": _g, "score": round(_v, 3),
+                                          "reading": _xc.read_depmap(_v)})
+                    st.session_state["xc_dm"] = {"rows": _rows, "problems": _probs}
+            _r = st.session_state.get("xc_dm")
+            if _r:
+                if _r["rows"]:
+                    _score_table(_r["rows"])
+                    st.caption("Higher = more essential. Above ~1.0 the cells "
+                               "die without it; near 0 it's dispensable.")
+                for _p in _r["problems"]:
+                    st.caption(f"⚠ {_p}")
+            elif not _genes:
+                st.caption("Waiting on a gene from the hypothesis above.")
+        else:
+            st.caption("Needs one file, downloaded once per machine.")
+            st.markdown(
+                f"Download **CRISPRGeneEffect.csv** (~440 MB) from "
+                f"[depmap.org/portal/data_page](https://depmap.org/portal/data_page/) "
+                f"and save it to `{target_scorer.DEPMAP_CSV.parent}/`. "
+                f"Browser download — no terminal needed.")
+            st.caption(f"Looked for it at `{target_scorer.DEPMAP_CSV}`. The file "
+                       f"is excluded from git because of its size, so it won't "
+                       f"be present on a hosted deploy.")
 
-    # ---- AlphaGenome: generate the Colab notebook --------------------------
-    with st.expander("Generate an AlphaGenome Colab notebook"):
-        st.caption("AlphaGenome scores whether a variant changes expression. It "
-                   "needs a free API key and runs in Colab — Benchmate writes "
-                   "the notebook, you run it, then upload the scores below.")
+    # ---------------- AlphaMissense ----------------
+    with st.container(border=True):
+        st.markdown("**AlphaMissense** — *would coding changes in this gene be "
+                    "damaging?*")
+        st.caption("Free Ensembl VEP API · nothing to install. It scores one base "
+                   "change at a time, so for a gene we score that gene's known "
+                   "pathogenic missense variants from ClinVar and average them. "
+                   "Real coordinates only — nothing is generated.")
+        _sv = _scan["scoreable_variants"]
+        if _sv:
+            st.caption(f"This hypothesis names coordinates ({_sv[0]['raw']}), so "
+                       f"that exact variant gets scored instead.")
+        if st.button("Run AlphaMissense", key="xc_am_btn",
+                     disabled=not (_genes or _sv)):
+            with st.spinner("Fetching ClinVar variants and scoring…"):
+                _rows, _probs = [], []
+                if _sv:
+                    for _v in _sv:
+                        _s = target_scorer.alphamissense_score(
+                            _v["chrom"], _v["pos"], _v["ref"], _v["alt"])
+                        if _s is None:
+                            _probs.append(f"{_v['raw']}: no score — it may not be "
+                                          f"a missense change.")
+                        else:
+                            _rows.append({"target": _v["raw"], "score": round(_s, 3),
+                                          "reading": _xc.read_alphamissense(_s)})
+                else:
+                    for _g in _genes:
+                        _m, _n, _why = _xc._gene_missense_burden(_g)
+                        if _m is None:
+                            _probs.append(_why)
+                        else:
+                            _rows.append({
+                                "target": f"{_g} (gene-level)",
+                                "score": round(_m, 3),
+                                "reading": (f"{_xc.read_alphamissense(_m)} — mean "
+                                            f"over {_n} ClinVar variants")})
+                st.session_state["xc_am"] = {"rows": _rows, "problems": _probs}
+        _r = st.session_state.get("xc_am")
+        if _r:
+            if _r["rows"]:
+                _score_table(_r["rows"])
+                st.caption("0–1. Above 0.564 is AlphaMissense's "
+                           "likely-pathogenic threshold; below 0.34 is likely "
+                           "benign.")
+            for _p in _r["problems"]:
+                st.caption(f"⚠ {_p}")
+        elif not (_genes or _sv):
+            st.caption("Waiting on a gene from the hypothesis above.")
 
-        # Which genes? Prefer the ones your question is actually about. In
-        # order: the Start here plan's cross-check targets, the genes in the
-        # hypothesis selected above, then your perturbation cache.
-        _ag_genes: list[str] = []
-        for _x in (st.session_state.get("sh_crosscheck") or []):
-            _t = str(_x.get("target", "")).strip().upper()
-            if _t and _t not in _ag_genes:
-                _ag_genes.append(_t)
-        if not _ag_genes and st.session_state.get("xc_result"):
-            _ag_genes = list(st.session_state["xc_result"]["scan"]["genes"])
+    # ---------------- AlphaGenome ----------------
+    with st.container(border=True):
+        st.markdown("**AlphaGenome** — *would a regulatory variant change this "
+                    "gene's expression?*")
+        st.caption("Needs a free API key and Python 3.10+, so it runs in Colab. "
+                   "Benchmate writes the notebook against real GTEx eQTLs for "
+                   "your genes; you run it and bring back the scores.")
+
+        _ag_genes = list(_genes)
+        _src_label = "the hypothesis above"
+        if not _ag_genes:
+            for _x in (st.session_state.get("sh_crosscheck") or []):
+                _t = str(_x.get("target", "")).strip().upper()
+                if _t and _t not in _ag_genes:
+                    _ag_genes.append(_t)
+            if _ag_genes:
+                _src_label = "your Start here plan"
         if not _ag_genes:
             try:
                 _ag_genes = list(available_geneformer_genes())[:6]
+                _src_label = "your perturbation cache"
             except Exception:
-                pass
+                _src_label = "nothing yet"
 
-        _src_label = ("your Start here plan" if st.session_state.get("sh_crosscheck")
-                      else "the hypothesis above" if st.session_state.get("xc_result")
-                      else "your perturbation cache" if _ag_genes
-                      else "nothing yet")
-        st.caption(f"Genes from **{_src_label}**. Edit freely — Benchmate looks "
-                   f"up a real GTEx eQTL for each one.")
+        st.caption(f"Genes from **{_src_label}** — edit freely.")
         _ag_txt = st.text_input("Genes to score (comma-separated)",
                                 value=", ".join(_ag_genes), key="ag_nb_genes")
         _ag_list = [g.strip().upper() for g in _ag_txt.split(",") if g.strip()]
-        if not _ag_list:
-            st.caption("Leave this empty to fall back to the built-in ERAD "
-                       "benchmark set — useful for calibration, but it won't "
-                       "reflect your question.")
 
-        _ag_written = st.session_state.get("ag_nb_path")
-        if st.button("Write the notebook", key="ag_nb_btn"):
+        _c1, _c2 = st.columns([1, 1])
+        with _c1:
+            _write_nb = st.button("Write the Colab notebook", key="ag_nb_btn",
+                                  use_container_width=True)
+        with _c2:
+            st.link_button("Open Colab", "https://colab.research.google.com",
+                           use_container_width=True)
+        if _write_nb:
             try:
                 from ui.alphagenome_nb import generate_alphagenome_notebook
                 with st.spinner("Looking up real eQTLs in GTEx…"):
                     _p, _n = generate_alphagenome_notebook(genes=_ag_list)
                 st.session_state["ag_nb_path"] = str(_p)
                 st.session_state["ag_nb_n"] = _n
-                _ag_written = str(_p)
             except Exception as ex:
-                st.error(f"Couldn't write the notebook: {ex}")
-        if _ag_written:
-            _pth = Path(_ag_written)
-            st.success(f"Wrote `{_pth.name}` with "
-                       f"{st.session_state.get('ag_nb_n', '?')} variants.")
-            if _pth.exists():
-                st.download_button("Download the notebook", _pth.read_bytes(),
-                                   file_name=_pth.name, key="ag_nb_dl")
-            st.caption("Upload it to [Colab](https://colab.research.google.com) "
-                       "→ run top to bottom → it downloads "
-                       "`alphagenome_scores.json`. Drop that into the "
-                       "AlphaGenome panel under Calibration below.")
+                st.session_state.pop("ag_nb_path", None)
+                st.error(str(ex))
+        _agp = st.session_state.get("ag_nb_path")
+        if _agp and Path(_agp).exists():
+            _pth = Path(_agp)
+            st.success(f"`{_pth.name}` — {st.session_state.get('ag_nb_n', '?')} "
+                       f"variants, each a real GTEx eQTL.")
+            st.download_button("Download the notebook", _pth.read_bytes(),
+                               file_name=_pth.name, key="ag_nb_dl",
+                               use_container_width=True)
+            st.caption("Upload to Colab → run top to bottom → it downloads "
+                       "`alphagenome_scores.json`. Bring that back to the "
+                       "AlphaGenome panel under **Calibration** below.")
+        if not _ag_list:
+            st.caption("With no genes it falls back to the built-in ERAD "
+                       "benchmark set — right for calibration, but it won't "
+                       "reflect your question.")
+
+    # ---------------- Boltz ----------------
+    with st.container(border=True):
+        st.markdown("**Boltz** — *does the drug actually bind the target?*")
+        if os.environ.get("BOLTZ_API_KEY"):
+            st.caption("API key found. Boltz needs a protein sequence plus a "
+                       "ligand, which a hypothesis sentence doesn't carry — set "
+                       "them up in `benchmark/gold_set_binding.py`, then use the "
+                       "Boltz panel under **Calibration** below.")
+        else:
+            st.caption("Needs a paid API key — the only model here that costs "
+                       "money.")
+            st.markdown("Sign up at [api.boltz.bio]"
+                        "(https://api.boltz.bio/console/signup) (launch credits "
+                        "available), create a key, then `export BOLTZ_API_KEY=…` "
+                        "before starting Streamlit.")
 
     # The five uploader panels below answer a DIFFERENT question from the
     # scoring panel above: not "is this hypothesis any good?" but "can I trust
