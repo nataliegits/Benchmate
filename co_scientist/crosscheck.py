@@ -15,6 +15,8 @@ rather than a bare number.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 from . import hypothesis_scan, target_scorer
 
 DEFAULT_DISEASE = getattr(target_scorer, "DEFAULT_DISEASE", "multiple myeloma")
@@ -109,6 +111,47 @@ def read_alphamissense(score: float) -> str:
 
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=256)
+def _gene_missense_burden(gene: str, max_variants: int = 5
+                          ) -> tuple[float | None, int, str]:
+    """Mean AlphaMissense pathogenicity across a gene's known ClinVar missense
+    variants. Returns (mean, n_scored, why_not).
+
+    Every coordinate comes from ClinVar — nothing is generated. Capped at a
+    handful of variants because each one is a VEP round-trip and this runs
+    inside a button click.
+
+    Cached: the same gene gets asked for on every rerun, and this is ~5 network
+    calls deep.
+    """
+    try:
+        from benchmark.fetch_clinvar import fetch
+    except Exception as e:
+        return None, 0, f"{gene}: ClinVar fetcher unavailable ({e})."
+
+    try:
+        recs = fetch([gene], per_class=max_variants)
+    except Exception as e:
+        return None, 0, f"{gene}: ClinVar lookup failed ({e})."
+
+    path = [r for r in recs
+            if str(r.get("clinsig", "")).lower().startswith("patho")]
+    if not path:
+        return None, 0, (f"{gene}: no pathogenic missense variants on record in "
+                         f"ClinVar, so there's no coding-change signal to score.")
+
+    scores = []
+    for r in path[:max_variants]:
+        s = target_scorer.alphamissense_score(
+            r.get("chrom"), r.get("pos"), r.get("ref"), r.get("alt"))
+        if s is not None:
+            scores.append(s)
+    if not scores:
+        return None, 0, (f"{gene}: found ClinVar variants but AlphaMissense "
+                         f"returned no score for any of them.")
+    return sum(scores) / len(scores), len(scores), ""
+
+
 def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
                      validate: bool = True) -> dict:
     """Run every applicable model against one hypothesis.
@@ -144,8 +187,15 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
 
     # ---- DepMap: gene dependency -----------------------------------------
     if not target_scorer.depmap_available():
-        skipped.append({"model": "DepMap",
-                        "why": "CRISPRGeneEffect.csv not downloaded yet."})
+        # Be specific. This file is gitignored (440 MB), so it's present locally
+        # and absent on a hosted deploy — "not downloaded" is confusing if you
+        # know you downloaded it.
+        _p = target_scorer.DEPMAP_CSV
+        skipped.append({"model": "DepMap", "kind": "setup",
+                        "why": (f"no CRISPR matrix at `{_p}`. It's a 440 MB file "
+                                f"excluded from git, so it has to be downloaded "
+                                f"once per machine — and it won't be present on "
+                                f"a hosted deploy at all.")})
     elif not genes:
         skipped.append({"model": "DepMap",
                         "why": "no gene named in the hypothesis."})
@@ -160,12 +210,27 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
                              "score": round(v, 3), "reading": read_depmap(v),
                              "scale": "higher = more essential"})
 
-    # ---- AlphaMissense: needs a real variant ------------------------------
-    if not variants:
+    # ---- AlphaMissense ----------------------------------------------------
+    # If the hypothesis names a variant, score that variant. If it only names a
+    # gene, we can still get a real gene-level answer: pull that gene's known
+    # pathogenic missense variants from ClinVar and score those. That says how
+    # damaging coding change in this gene tends to be — a genuine signal, from
+    # real coordinates, rather than "not applicable".
+    if not variants and genes:
+        for g in genes:
+            mean, n, why = _gene_missense_burden(g)
+            if mean is None:
+                skipped.append({"model": "AlphaMissense", "why": why})
+            else:
+                rows.append({"model": "AlphaMissense", "target": f"{g} (gene-level)",
+                             "score": round(mean, 3),
+                             "reading": (f"{read_alphamissense(mean)} — mean over "
+                                         f"{n} known ClinVar missense variants"),
+                             "scale": "0–1, >0.564 = likely pathogenic"})
+    elif not variants:
         skipped.append({"model": "AlphaMissense",
-                        "why": ("no variant with genomic coordinates in the "
-                                "hypothesis. It scores a specific base change, "
-                                "so a gene name alone isn't enough.")})
+                        "why": ("no gene or variant named, so there's nothing to "
+                                "look up.")})
     else:
         for v in variants:
             s = target_scorer.alphamissense_score(
@@ -181,15 +246,22 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
                              "scale": "0–1, >0.564 = likely pathogenic"})
 
     # ---- the two that need external setup ---------------------------------
-    skipped.append({"model": "AlphaGenome",
-                    "why": ("runs in Colab — generate the notebook below, then "
-                            "upload the scores it produces.")})
+    skipped.append({"model": "AlphaGenome", "kind": "setup",
+                    "why": ("needs a free API key and runs in Colab — generate "
+                            "the notebook below, then upload its scores.")})
     import os
     if not os.environ.get("BOLTZ_API_KEY"):
-        skipped.append({"model": "Boltz",
-                        "why": "no BOLTZ_API_KEY set (paid API)."})
+        skipped.append({"model": "Boltz", "kind": "setup",
+                        "why": "needs a paid API key from api.boltz.bio."})
 
-    return {"scan": sc, "rows": rows, "skipped": skipped, "disease": disease}
+    # Split "can't run" from "doesn't apply" — lumping them together makes a
+    # working panel look broken.
+    for s in skipped:
+        s.setdefault("kind", "na")
+    return {"scan": sc, "rows": rows, "skipped": skipped,
+            "setup_needed": [s for s in skipped if s["kind"] == "setup"],
+            "not_applicable": [s for s in skipped if s["kind"] == "na"],
+            "disease": disease}
 
 
 def verdict(result: dict) -> str:

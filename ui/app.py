@@ -1437,11 +1437,19 @@ with tab3:
                 use_container_width=True, hide_index=True)
         st.info(_xc.verdict(_res))
 
-        if _res["skipped"]:
-            with st.expander(f"Why {len(_res['skipped'])} check(s) didn't run"):
-                st.caption("A model that can't run is different from a model "
-                           "that disagrees. These are the former.")
-                for s in _res["skipped"]:
+        _na = _res.get("not_applicable", [])
+        _need = _res.get("setup_needed", [])
+        if _na:
+            st.caption("Doesn't apply to this hypothesis: "
+                       + " · ".join(f"**{s['model']}**" for s in _na))
+            with st.expander("Why these don't apply"):
+                st.caption("Not a failure — these models answer questions this "
+                           "hypothesis doesn't ask.")
+                for s in _na:
+                    st.markdown(f"- **{s['model']}** — {s['why']}")
+        if _need:
+            with st.expander(f"{len(_need)} model(s) need one-time setup"):
+                for s in _need:
                     st.markdown(f"- **{s['model']}** — {s['why']}")
         for n in _sc.get("notes", []):
             st.caption(n)
