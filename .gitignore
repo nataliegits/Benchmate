@@ -36,3 +36,4 @@ data/depmap/*.csv
 *.jpg
 *.jpeg
 *.png
+.benchmate_run.log

@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -23,6 +24,27 @@ from co_scientist import assay, freezer
 from ui.notebook_gen import generate_notebook, resolve_to_ensembl, CELL_TYPE_PRESETS
 from ui.colab_handoff import handoff, gh_available, GhUnavailable
 from co_scientist.llm_config import model_for, _DEFAULT_ROLE_MODELS
+
+
+def _clean_reagent(raw) -> str:
+    """Reduce a designed reagent line to just the compound name.
+
+    The designer writes for a human — "Kifunensine (10 uM) - blocks mannose
+    trimming", "Bortezomib, 5 nM, positive control". The freezer matcher is
+    comparing against cap labels like "kifunensine", so that extra prose is
+    what makes a reagent on the shelf come back as "not in this box".
+    """
+    import re as _re
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    # drop anything after a dash/colon separator, or a parenthetical
+    s = _re.split(r"\s+[—–-]\s+|:\s|\s*\(", s)[0]
+    # drop trailing dose / concentration fragments
+    s = _re.sub(r"[,;]?\s*\d+(\.\d+)?\s*(n|u|µ|m)?[mM](ol)?\b.*$", "", s)
+    s = _re.sub(r"[,;]\s*(vehicle|positive|negative)\s+control.*$", "", s,
+                flags=_re.I)
+    return s.strip(" ,;.").strip()
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -584,33 +606,76 @@ with tab2:
     st.caption(f"Estimated Anthropic spend: ~${cost_estimate:.2f} "
                f"({iterations} iterations).")
 
-    if st.button("Run Benchmate", type="primary"):
-        st.info("Running. Log lines stream below; the page stays responsive.")
-        log_box = st.empty()
-        log_lines: list[str] = []
-        proc = subprocess.Popen(
-            [sys.executable, "run.py", goal, "--max-iterations", str(iterations)],
-            cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-        )
-        for line in proc.stdout:  # type: ignore[union-attr]
-            log_lines.append(line.rstrip())
-            log_box.code("\n".join(log_lines[-120:]))
-        proc.wait()
-        if proc.returncode == 0:
-            st.session_state.run_ok = True
+    # A run takes minutes. Two things made that look like a dead button:
+    # the child's stdout is block-buffered when piped, so nothing appeared for
+    # ages, and reading it line-by-line blocked the whole Streamlit script —
+    # freezing the page. So: launch detached, log to a file, and poll.
+    RUN_LOG = REPO_ROOT / ".benchmate_run.log"
+    _proc = st.session_state.get("run_proc")
+    _running = _proc is not None and _proc.poll() is None
+
+    c_run, c_stop = st.columns([1, 1])
+    _go = c_run.button("Run Benchmate", type="primary", disabled=_running)
+    if c_stop.button("Stop run", disabled=not _running):
+        _proc.terminate()
+        st.session_state.run_proc = None
+        st.warning("Run stopped.")
+
+    if _go:
+        if not goal.strip():
+            st.warning("Type a research goal first.")
+        elif not (os.environ.get("ANTHROPIC_API_KEY")
+                  or (REPO_ROOT / ".env").exists()):
+            st.error("No ANTHROPIC_API_KEY found. Add it in the sidebar or "
+                     "your .env file — the run would fail immediately.")
         else:
-            st.session_state.run_ok = False
-            st.session_state.run_rc = proc.returncode
+            _fh = open(RUN_LOG, "w")
+            st.session_state.run_proc = subprocess.Popen(
+                # -u and PYTHONUNBUFFERED so the log appears as it happens
+                # instead of arriving in one lump when the process exits
+                [sys.executable, "-u", "run.py", goal,
+                 "--max-iterations", str(iterations)],
+                cwd=REPO_ROOT, stdout=_fh, stderr=subprocess.STDOUT,
+                text=True, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+            st.session_state.run_started = time.time()
+            st.session_state.pop("run_ok", None)
+            st.rerun()
+
+    # ---- poll the running process (survives tab switches) -------------------
+    _proc = st.session_state.get("run_proc")
+    if _proc is not None:
+        _tail = RUN_LOG.read_text()[-6000:] if RUN_LOG.exists() else ""
+        _rc = _proc.poll()
+        if _rc is None:
+            _el = int(time.time() - st.session_state.get("run_started", time.time()))
+            st.info(f"Running — {_el // 60}m {_el % 60}s elapsed. "
+                    f"This refreshes itself; you can switch tabs and come back.")
+            st.code(_tail or "starting up (loading models, first API call)…")
+            time.sleep(2.5)
+            st.rerun()
+        else:
+            st.session_state.run_ok = (_rc == 0)
+            st.session_state.run_rc = _rc
+            st.session_state.run_proc = None
+            with st.expander("Run log", expanded=_rc != 0):
+                st.code(_tail or "(no output)")
+            st.rerun()
 
     # ---- Results (rendered on EVERY rerun, so they survive clicking around) ----
     # Read from state.json on disk, so the leaderboard is still here after you
     # switch tabs, tweak a widget, or even restart the app.
     state_file = REPO_ROOT / "state.json"
     if st.session_state.get("run_ok") is False:
-        st.error(f"Benchmate exited with code {st.session_state.get('run_rc')}.")
+        st.error(f"Benchmate exited with code {st.session_state.get('run_rc')}. "
+                 f"The log below says why.")
     elif st.session_state.get("run_ok"):
         st.success("Benchmate finished.")
+    # keep the log reachable after the run ends — it's the only place a crash
+    # or a rate-limit message shows up
+    if RUN_LOG.exists() and st.session_state.get("run_proc") is None:
+        with st.expander("Run log", expanded=st.session_state.get("run_ok") is False):
+            st.code(RUN_LOG.read_text()[-8000:] or "(empty)")
     if state_file.exists():
         # Parse and display top hypotheses as a real Streamlit table
         # so column headers stay visible regardless of log scrollback.
@@ -1670,10 +1735,39 @@ with tab4:
         _rn = (d or {}).get("reagents_needed")
         if isinstance(_rn, str):
             _rn = [_rn]
-        prefill = (", ".join(str(r) for r in _rn) if _rn
-                   else "kifunensine, bortezomib, DMSO")
-        needed_txt = st.text_input("Reagents needed (comma-separated)",
-                                   value=prefill, key="exec_needed")
+        _rn = [_clean_reagent(r) for r in (_rn or [])]
+        _rn = [r for r in _rn if r]
+
+        # Streamlit trap: a text_input with BOTH `key` and `value` only honours
+        # `value` the first time. After that session_state wins, so the box kept
+        # showing the demo reagents forever and the design never came through.
+        # Write to session_state instead, and only when the design changes — so
+        # a hand-edited list isn't clobbered on every rerun.
+        _sig = "|".join(_rn)
+        if _rn and st.session_state.get("_exec_design_sig") != _sig:
+            st.session_state["exec_needed"] = ", ".join(_rn)
+            st.session_state["_exec_design_sig"] = _sig
+        st.session_state.setdefault("exec_needed", "kifunensine, bortezomib, DMSO")
+
+        if d:
+            st.caption("From your current design: "
+                       + (", ".join(_rn) if _rn else "no reagents listed"))
+        else:
+            st.info("No design yet — showing demo reagents. Run **1 · Design** "
+                    "first and this fills itself in.")
+
+        cn, cb = st.columns([4, 1])
+        with cn:
+            needed_txt = st.text_input("Reagents needed (comma-separated)",
+                                       key="exec_needed")
+        with cb:
+            st.write("")
+            st.write("")
+            if st.button("Reset to design", disabled=not _rn,
+                         key="exec_reset", help="Discard edits and re-pull "
+                                                "the design's reagent list."):
+                st.session_state["exec_needed"] = ", ".join(_rn)
+                st.rerun()
         needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
         st.caption("alamarBlue, media, and plates are assumed on hand — this checks "
                    "the experimental compounds.")
