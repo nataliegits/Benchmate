@@ -112,8 +112,8 @@ def read_alphamissense(score: float) -> str:
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=256)
-def _gene_missense_burden(gene: str, max_variants: int = 5
-                          ) -> tuple[float | None, int, str]:
+def gene_missense_burden(gene: str, max_variants: int = 5
+                         ) -> tuple[float | None, int, str]:
     """Mean AlphaMissense pathogenicity across a gene's known ClinVar missense
     variants. Returns (mean, n_scored, why_not).
 
@@ -150,6 +150,10 @@ def _gene_missense_burden(gene: str, max_variants: int = 5
         return None, 0, (f"{gene}: found ClinVar variants but AlphaMissense "
                          f"returned no score for any of them.")
     return sum(scores) / len(scores), len(scores), ""
+
+
+# back-compat: the UI used to reach for the private name
+_gene_missense_burden = gene_missense_burden
 
 
 def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
@@ -218,7 +222,7 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
     # real coordinates, rather than "not applicable".
     if not variants and genes:
         for g in genes:
-            mean, n, why = _gene_missense_burden(g)
+            mean, n, why = gene_missense_burden(g)
             if mean is None:
                 skipped.append({"model": "AlphaMissense", "why": why})
             else:

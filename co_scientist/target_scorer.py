@@ -104,12 +104,53 @@ def opentargets_score(symbol: str, disease: str = DEFAULT_DISEASE) -> float | No
 # the disease's own cell lines (multiple myeloma) — a more on-target dependency
 # than the pan-cancer mean.
 
+DEPMAP_SUMMARY = Path(os.environ.get(
+    "DEPMAP_SUMMARY", _DEPMAP_DIR / "gene_effect_summary.csv"))
+
+
 def depmap_available() -> bool:
+    """True if either the full matrix or the committed summary is present.
+
+    The full CSV is 440 MB and gitignored, so on a hosted deploy only the
+    summary exists. Requiring the big file meant DepMap was permanently
+    unavailable to anyone who didn't run Benchmate locally.
+    """
     try:
         import pandas  # noqa: F401
-        return DEPMAP_CSV.exists()
+        return DEPMAP_CSV.exists() or DEPMAP_SUMMARY.exists()
     except Exception:
         return False
+
+
+def depmap_source() -> str:
+    """Which file a score will come from — 'full', 'summary', or 'none'.
+    The UI shows this so a number's provenance is never ambiguous."""
+    if DEPMAP_CSV.exists():
+        return "full"
+    if DEPMAP_SUMMARY.exists():
+        return "summary"
+    return "none"
+
+
+@lru_cache(maxsize=1)
+def _depmap_summary_frame():
+    """The small per-gene summary, indexed by symbol."""
+    import pandas as pd
+    df = pd.read_csv(DEPMAP_SUMMARY)
+    df["gene"] = df["gene"].astype(str).str.upper()
+    return df.set_index("gene")
+
+
+def depmap_lineage_in_use() -> str:
+    """The lineage the numbers actually reflect. Reads it from the summary
+    rather than assuming, because a pan-cancer average and a myeloma-restricted
+    one are different claims."""
+    try:
+        if DEPMAP_CSV.exists():
+            return DEPMAP_LINEAGE if _myeloma_model_ids() else "all"
+        return str(_depmap_summary_frame()["lineage"].iloc[0])
+    except Exception:
+        return "unknown"
 
 
 @lru_cache(maxsize=1)
@@ -152,6 +193,16 @@ def depmap_score(symbol: str) -> float | None:
     isn't found."""
     if not depmap_available():
         return None
+
+    # No full matrix (the usual case on a hosted deploy) — use the committed
+    # per-gene summary. Same underlying DepMap numbers, precomputed.
+    if not DEPMAP_CSV.exists():
+        try:
+            row = _depmap_summary_frame().loc[symbol.upper()]
+            return float(-float(row["mean_effect"]))
+        except Exception:
+            return None
+
     try:
         df = _depmap_frame()
         # columns look like "SYVN1 (ENSG...)" — match on the leading symbol

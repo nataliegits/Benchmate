@@ -1426,6 +1426,19 @@ with tab3:
             st.caption("Name the gene explicitly (e.g. `SEL1L`, not "
                        "\"the ERAD receptor\") and these models can look it up.")
 
+    def _q(template: str) -> str:
+        """Put the hypothesis's own genes into a model's question.
+
+        "Do cancer cells need UBE2J1 to survive?" lands; "do cancer cells need
+        this gene to survive?" makes you do the substitution in your head.
+        """
+        if not _genes:
+            return template.replace("{g}", "this gene")
+        shown = ", ".join(_genes[:3])
+        if len(_genes) > 3:
+            shown += f" +{len(_genes) - 3} more"
+        return template.replace("{g}", shown)
+
     def _score_table(rows):
         import pandas as pd
         st.dataframe(
@@ -1435,8 +1448,8 @@ with tab3:
 
     # ---------------- Open Targets ----------------
     with st.container(border=True):
-        st.markdown("**Open Targets** — *is this gene actually linked to the "
-                    "disease?*")
+        st.markdown("**Open Targets** — *"
+                    + _q("is {g} actually linked to this disease?") + "*")
         st.caption("Public API · nothing to install · genetics, literature and "
                    "known drugs, aggregated into one 0–1 association score.")
         _c1, _c2 = st.columns([2, 1])
@@ -1471,17 +1484,19 @@ with tab3:
 
     # ---------------- DepMap ----------------
     with st.container(border=True):
-        st.markdown("**DepMap** — *do cancer cells actually need this gene to "
-                    "survive?*")
+        st.markdown("**DepMap** — *"
+                    + _q("do cancer cells actually need {g} to survive?") + "*")
         _dm_ok = target_scorer.depmap_available()
         if _dm_ok:
-            _lineage = target_scorer.DEPMAP_LINEAGE
-            _has_model = target_scorer.DEPMAP_MODEL_CSV.exists()
-            st.caption(f"Local CRISPR knockout matrix · "
-                       + (f"restricted to {_lineage} cell lines"
-                          if _has_model else
-                          "averaged over ALL cancer lines (add Model.csv to "
-                          "restrict to " + _lineage + ")"))
+            _dm_src = target_scorer.depmap_source()
+            _dm_lin = target_scorer.depmap_lineage_in_use()
+            st.caption(
+                ("Full CRISPR knockout matrix on this machine · "
+                 if _dm_src == "full" else
+                 "Precomputed gene-effect summary that ships with Benchmate · ")
+                + (f"averaged over {_dm_lin} cancer cell lines"
+                   if _dm_lin == "all" else
+                   f"restricted to {_dm_lin} cell lines"))
             if st.button("Run DepMap", key="xc_dm_btn", disabled=not _genes):
                 with st.spinner("Reading the CRISPR matrix…"):
                     _rows, _probs = [], []
@@ -1504,20 +1519,18 @@ with tab3:
             elif not _genes:
                 st.caption("Waiting on a gene from the hypothesis above.")
         else:
-            st.caption("Needs one file, downloaded once per machine.")
-            st.markdown(
-                f"Download **CRISPRGeneEffect.csv** (~440 MB) from "
-                f"[depmap.org/portal/data_page](https://depmap.org/portal/data_page/) "
-                f"and save it to `{target_scorer.DEPMAP_CSV.parent}/`. "
-                f"Browser download — no terminal needed.")
-            st.caption(f"Looked for it at `{target_scorer.DEPMAP_CSV}`. The file "
-                       f"is excluded from git because of its size, so it won't "
-                       f"be present on a hosted deploy.")
+            st.warning(
+                "No DepMap data found — this shouldn't happen, since a "
+                "precomputed summary ships with Benchmate. Expected it at "
+                f"`{target_scorer.DEPMAP_SUMMARY}`.")
+            st.caption("To rebuild it: download CRISPRGeneEffect.csv from "
+                       "[depmap.org](https://depmap.org/portal/data_page/) and "
+                       "run `python -m benchmark.build_depmap_summary`.")
 
     # ---------------- AlphaMissense ----------------
     with st.container(border=True):
-        st.markdown("**AlphaMissense** — *would coding changes in this gene be "
-                    "damaging?*")
+        st.markdown("**AlphaMissense** — *"
+                    + _q("would coding changes in {g} be damaging?") + "*")
         st.caption("Free Ensembl VEP API · nothing to install. It scores one base "
                    "change at a time, so for a gene we score that gene's known "
                    "pathogenic missense variants from ClinVar and average them. "
@@ -1542,7 +1555,7 @@ with tab3:
                                           "reading": _xc.read_alphamissense(_s)})
                 else:
                     for _g in _genes:
-                        _m, _n, _why = _xc._gene_missense_burden(_g)
+                        _m, _n, _why = _xc.gene_missense_burden(_g)
                         if _m is None:
                             _probs.append(_why)
                         else:
@@ -1566,8 +1579,8 @@ with tab3:
 
     # ---------------- AlphaGenome ----------------
     with st.container(border=True):
-        st.markdown("**AlphaGenome** — *would a regulatory variant change this "
-                    "gene's expression?*")
+        st.markdown("**AlphaGenome** — *"
+                    + _q("would a regulatory variant change {g} expression?") + "*")
         st.caption("Needs a free API key and Python 3.10+, so it runs in Colab. "
                    "Benchmate writes the notebook against real GTEx eQTLs for "
                    "your genes; you run it and bring back the scores.")
