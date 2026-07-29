@@ -18,6 +18,7 @@ ranking, exactly like AlphaGenome and Boltz.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 # Open Targets keys diseases by MONDO/EFO id, but they vary — so we resolve the
@@ -111,6 +112,18 @@ def depmap_available() -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
+def _depmap_frame():
+    """The CRISPR gene-effect matrix, loaded once per process.
+
+    CRISPRGeneEffect.csv is ~440 MB. Scoring a four-gene hypothesis used to
+    re-parse the whole thing four times, which is tens of seconds of dead air
+    per click. Cached so the cost is paid once.
+    """
+    import pandas as pd
+    return pd.read_csv(DEPMAP_CSV, index_col=0)
+
+
 def _myeloma_model_ids() -> set[str] | None:
     """ModelIDs whose metadata mentions the target lineage (default 'myeloma').
     Returns None if Model.csv is absent or no rows match — caller falls back to
@@ -140,8 +153,7 @@ def depmap_score(symbol: str) -> float | None:
     if not depmap_available():
         return None
     try:
-        import pandas as pd
-        df = pd.read_csv(DEPMAP_CSV, index_col=0)
+        df = _depmap_frame()
         # columns look like "SYVN1 (ENSG...)" — match on the leading symbol
         col = next((c for c in df.columns if c.split(" ")[0].upper() == symbol.upper()),
                    None)
