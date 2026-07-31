@@ -1700,6 +1700,9 @@ with tab3:
         st.caption("Needs a free API key and Python 3.10+, so it runs in Colab. "
                    "Benchmate writes the notebook against real GTEx eQTLs for "
                    "your genes; you run it and bring back the scores.")
+        st.markdown("Get a free key from [DeepMind]"
+                    "(https://deepmind.google.com/science/alphagenome/) "
+                    "(non-commercial use) — the notebook prompts you for it.")
 
         _ag_genes = list(_genes)
         _src_label = "the hypothesis above"
@@ -1809,15 +1812,40 @@ with tab3:
                 value=(_genes[0] if _genes else ""), key="bz_gene",
                 help="Benchmate fetches the canonical sequence from UniProt — "
                      "sequences are never made up.")
-            _lig = _bc2.text_input(
-                "Ligand as SMILES", key="bz_smiles",
-                placeholder="e.g. CC(C)C[C@H](NC(=O)...)B(O)O",
-                help="Get SMILES from PubChem or DrugBank. A wrong SMILES "
-                     "silently scores a different molecule.")
-            st.caption("Need SMILES? Search the compound on "
-                       "[PubChem](https://pubchem.ncbi.nlm.nih.gov) and copy "
-                       "its Canonical SMILES.")
+            # Nobody knows SMILES off-hand, and the Run button being greyed out
+            # with no explanation was the whole blocker. So: type a drug name,
+            # Benchmate resolves the structure from PubChem.
+            _drug = _bc2.text_input(
+                "Compound name", key="bz_drug",
+                placeholder="e.g. bortezomib",
+                help="Benchmate looks the structure up in PubChem — it never "
+                     "makes a SMILES string up.")
+            if _drug and st.session_state.get("_bz_drug_done") != _drug:
+                from co_scientist.pubchem import smiles_for
+                with st.spinner(f"Looking up {_drug} in PubChem…"):
+                    _smi, _cid, _note = smiles_for(_drug)
+                st.session_state["_bz_drug_done"] = _drug
+                st.session_state["bz_smiles"] = _smi or ""
+                st.session_state["_bz_cid"] = _cid
+                st.session_state["_bz_note"] = _note
 
+            _lig = st.text_input(
+                "Ligand as SMILES", key="bz_smiles",
+                placeholder="filled in from PubChem, or paste your own",
+                help="A wrong SMILES silently scores a different molecule, so "
+                     "check it matches the compound you mean.")
+            if st.session_state.get("_bz_note"):
+                st.warning(st.session_state["_bz_note"])
+            elif st.session_state.get("_bz_cid"):
+                from co_scientist.pubchem import pubchem_url
+                _cid = st.session_state["_bz_cid"]
+                st.caption(f"Structure from PubChem CID "
+                           f"[{_cid}]({pubchem_url(_cid)}) — confirm it's the "
+                           f"compound you meant before spending a run.")
+
+            if not (_prot_gene and _lig):
+                st.caption("Needs both a gene symbol and a ligand. Type a "
+                           "compound name above and the SMILES fills itself in.")
             if st.button("Run Boltz", key="bz_run",
                          disabled=not (_prot_gene and _lig), type="primary"):
                 _seq, _acc, _err = None, None, None
@@ -1888,7 +1916,7 @@ with tab3:
             _show_saved("elo_vs_predictor")
             with st.expander("How to produce real scores (AlphaGenome setup)"):
                 st.markdown(
-                    "1. Free key at [alphagenomedocs.com](https://www.alphagenomedocs.com/) "
+                    "1. Free key at [DeepMind](https://deepmind.google.com/science/alphagenome/) "
                     "→ *Get started* (sign in with a personal @gmail).\n"
                     "2. Generate the notebook above (**Generate an AlphaGenome "
                     "Colab notebook**) and run it on "

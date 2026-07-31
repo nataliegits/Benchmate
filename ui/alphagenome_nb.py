@@ -90,6 +90,83 @@ def _load_variants() -> tuple[list[dict], str]:
     return rows, prov
 
 
+AG_KEY_URL = "https://deepmind.google.com/science/alphagenome/"
+
+
+def _install_cell() -> list[str]:
+    """Install AlphaGenome without letting pip move numpy.
+
+    The template shipped `!pip install -q alphagenome`, which is how you get
+
+        AttributeError: module 'numpy._core._multiarray_umath' has no
+        attribute '_blas_supports_fpe'
+
+    at `from alphagenome.models import dna_client`. The install pulls a
+    different numpy; Colab's preinstalled packages are compiled against the
+    original, and the half-swapped state only surfaces later, inside somebody
+    else's import. Exactly the failure the Geneformer notebook hit.
+
+    Same fix: pin numpy to the version already present via a constraints file,
+    then restart so nothing stale is left in memory.
+    """
+    return [
+        "# Install AlphaGenome — run this FIRST, once per session.\n",
+        "#\n",
+        "# The rule on Colab: never let pip move numpy. Colab's scientific\n",
+        "# stack is compiled against the numpy in the image, so swapping it\n",
+        "# produces errors far from the cause, e.g.\n",
+        "#   AttributeError: module 'numpy._core._multiarray_umath' has no\n",
+        "#                   attribute '_blas_supports_fpe'\n",
+        "# So we hold numpy at the installed version with a constraints file.\n",
+        "\n",
+        "def _ready():\n",
+        "    try:\n",
+        "        from alphagenome.models import dna_client  # noqa: F401\n",
+        "        return True\n",
+        "    except Exception:\n",
+        "        return False\n",
+        "\n",
+        "if _ready():\n",
+        "    print('alphagenome already installed — skip to the next cell.')\n",
+        "else:\n",
+        "    import numpy, subprocess, sys\n",
+        "    with open('/tmp/constraints.txt', 'w') as f:\n",
+        "        f.write(f'numpy=={numpy.__version__}\\n')\n",
+        "    print(f'holding numpy at {numpy.__version__}')\n",
+        "    r = subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',\n",
+        "                        '--no-cache-dir', '-c', '/tmp/constraints.txt',\n",
+        "                        'alphagenome'], capture_output=True, text=True)\n",
+        "    if r.returncode != 0:\n",
+        "        print(r.stdout[-2000:]); print(r.stderr[-2000:])\n",
+        "        raise SystemExit('pip install failed — see output above.')\n",
+        "    import importlib.metadata as _md\n",
+        "    print('numpy now:', _md.version('numpy'))\n",
+        "    print('\\nInstalled. RESTARTING the runtime so the import state is\\n'\n",
+        "          'clean — Colab will say the session crashed. That is expected.\\n"
+        "When it comes back, skip this cell and run the next one.')\n",
+        "    import IPython\n",
+        "    IPython.Application.instance().kernel.do_shutdown(True)\n",
+    ]
+
+
+def _verify_cell() -> list[str]:
+    """Fail here, with a clear message, rather than five cells later."""
+    return [
+        "# Sanity check — confirms numpy survived and AlphaGenome imports.\n",
+        "import numpy as np\n",
+        "print('numpy', np.__version__)\n",
+        "try:\n",
+        "    np._core._multiarray_umath._blas_supports_fpe  # the canary\n",
+        "except AttributeError:\n",
+        "    print('PROBLEM: numpy is in a mixed state. Runtime -> Restart\\n'\n",
+        "          'session, then run the install cell again.')\n",
+        "else:\n",
+        "    from alphagenome.data import genome\n",
+        "    from alphagenome.models import dna_client\n",
+        "    print('alphagenome imports OK — ready to score.')\n",
+    ]
+
+
 def _variants_cell(rows: list[dict]) -> list[str]:
     src = ["# Real GTEx eQTL coordinates (hg38) — pulled by "
            "benchmark/fetch_eqtls.py.\n",
@@ -136,12 +213,39 @@ def generate_alphagenome_notebook(genes: list[str] | None = None,
     nb = json.loads(TEMPLATE.read_text())
 
     replaced = False
+    install_done = False
     for cell in nb["cells"]:
         src = "".join(cell.get("source", []))
 
         if cell.get("cell_type") == "code" and "VARIANTS = [" in src:
             cell["source"] = _variants_cell(rows)
             replaced = True
+
+        # always replace the install cell, never merely insert when absent —
+        # a stale template copy would otherwise survive without the numpy pin
+        elif cell.get("cell_type") == "code" and "pip install" in src \
+                and "alphagenome" in src:
+            cell["source"] = _install_cell()
+            install_done = True
+
+        # The key now comes from DeepMind, not alphagenomedocs.com. Match the
+        # key section exactly — an earlier version matched any markdown
+        # containing "API key", which also hit the intro and the scoring
+        # section and overwrote both.
+        elif cell.get("cell_type") == "markdown" \
+                and "Paste your AlphaGenome API key" in src:
+            cell["source"] = [
+                "### 2. Paste your AlphaGenome API key\n\n",
+                f"Free for non-commercial use — get one at\n"
+                f"[{AG_KEY_URL}]({AG_KEY_URL}).\n",
+            ]
+
+        # elsewhere, only swap the stale URL; leave the surrounding text alone
+        elif cell.get("cell_type") == "markdown" and "alphagenomedocs" in src:
+            cell["source"] = [src
+                              .replace("https://www.alphagenomedocs.com/", AG_KEY_URL)
+                              .replace("www.alphagenomedocs.com", "deepmind.google.com/science/alphagenome")
+                              .replace("alphagenomedocs.com", "deepmind.google.com/science/alphagenome")]
 
         # the template warns that coordinates are placeholders — no longer true,
         # and leaving the warning in would train the reader to distrust real data
@@ -164,6 +268,28 @@ def generate_alphagenome_notebook(genes: list[str] | None = None,
     if not replaced:
         raise RuntimeError("Template has no `VARIANTS = [` cell to replace — "
                            "the notebook layout changed.")
+    if not install_done:
+        raise RuntimeError("Template has no alphagenome install cell — refusing "
+                           "to ship a notebook without the numpy pin.")
+
+    # Insert the verify cell right after the install cell, replacing any
+    # previous copy so it can't go stale.
+    _idx = next(i for i, c in enumerate(nb["cells"])
+                if c.get("cell_type") == "code"
+                and "holding numpy at" in "".join(c.get("source", [])))
+    _vcell = {"cell_type": "code", "execution_count": None, "metadata": {},
+              "outputs": [], "source": _verify_cell()}
+    if (_idx + 1 < len(nb["cells"])
+            and "the canary" in "".join(nb["cells"][_idx + 1].get("source", []))):
+        nb["cells"][_idx + 1] = _vcell
+    else:
+        nb["cells"].insert(_idx + 1, _vcell)
+
+    # The intro must still be the intro — a previous over-broad markdown match
+    # silently replaced it, so assert rather than trust.
+    _first = "".join(nb["cells"][0].get("source", []))
+    if not _first.lstrip().startswith("#"):
+        raise RuntimeError("The intro cell was overwritten during generation.")
 
     # generated notebooks ship clean: no stale outputs from someone else's run
     for cell in nb["cells"]:
