@@ -145,25 +145,44 @@ st.markdown(
             font-family: 'JetBrains Mono', 'SF Mono', Menlo,
                          monospace !important;
         }
-        /* Tab labels: same Inter face and weight as the Benchmate title, so
-           the top-level navigation reads as headings rather than as small
-           grey UI chrome. Streamlit renders the label in a nested <p>, which
-           is why the rule has to reach inside the button. */
-        .stTabs [data-baseweb="tab"] {
+        /* Tab labels: bold Inter, matching the Benchmate title, at whatever
+           size Streamlit already uses.
+
+           Anchored on the ARIA role, not `.stTabs`. That class is
+           emotion-generated and its name changes between Streamlit versions,
+           so `.stTabs [data-baseweb="tab"]` silently matched nothing, which is
+           why the first attempt at this had no visible effect. `[role="tab"]`
+           is required for accessible tabs and doesn't churn. The BaseWeb
+           attribute is kept as a fallback.
+
+           Note the role selectors only ever hit tab strips, so ordinary
+           buttons elsewhere in the app are unaffected.
+
+           The descendant `*` matters too: the label text sits in a nested <p>
+           inside a markdown container, and styling only the button leaves that
+           <p> inheriting Streamlit's own regular weight. font-size stays
+           `inherit` so this changes weight and face only. */
+        [role="tab"],
+        [role="tab"] *,
+        [role="tablist"] button,
+        [role="tablist"] button *,
+        button[data-baseweb="tab"],
+        button[data-baseweb="tab"] * {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont,
                          'Segoe UI', sans-serif !important;
-            font-weight: 600 !important;
-            letter-spacing: -0.01em;
-        }
-        .stTabs [data-baseweb="tab"] p {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
-                         'Segoe UI', sans-serif !important;
-            font-weight: 600 !important;
-            letter-spacing: -0.01em;
+            font-weight: 700 !important;
+            font-size: inherit !important;
+            letter-spacing: -0.01em !important;
         }
         /* selected tab in full ink, the rest a step back */
-        .stTabs [aria-selected="true"] p { color: #111111 !important; }
-        .stTabs [aria-selected="false"] p { color: #6b6b6b !important; }
+        [role="tab"][aria-selected="true"],
+        [role="tab"][aria-selected="true"] * {
+            color: #111111 !important;
+        }
+        [role="tab"][aria-selected="false"],
+        [role="tab"][aria-selected="false"] * {
+            color: #6b6b6b !important;
+        }
 
         /* Monochrome editorial. Ink primary buttons */
         .stButton button[kind="primary"] {
