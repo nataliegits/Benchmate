@@ -47,6 +47,66 @@ def _clean_reagent(raw) -> str:
     return s.strip(" ,;.").strip()
 
 
+def _stale_modules() -> list[str]:
+    """Detect a UI newer than the co_scientist modules backing it.
+
+    Streamlit re-executes this file on every rerun but leaves already-imported
+    modules in sys.modules. On Streamlit Cloud that means a fresh deploy can run
+    a new app.py against the previous session's co_scientist package — which
+    surfaces as a redacted AttributeError deep in a tab, with no hint that a
+    reboot is all that's needed.
+
+    So: name the attributes this UI depends on, and report the ones missing
+    rather than letting the tab explode.
+    """
+    import importlib
+    required = {
+        "co_scientist.target_scorer": ["DEPMAP_SUMMARY", "depmap_source",
+                                       "depmap_lineage_in_use"],
+        "co_scientist.crosscheck": ["gene_missense_burden", "read_depmap",
+                                    "model_status"],
+        "co_scientist.hypothesis_scan": ["scan", "genes_in"],
+    }
+    missing = []
+    for mod_name, attrs in required.items():
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception as e:
+            missing.append(f"{mod_name} (import failed: {e})")
+            continue
+        gone = [a for a in attrs if not hasattr(mod, a)]
+        if gone:
+            missing.append(f"{mod_name}: missing {', '.join(gone)}")
+    return missing
+
+
+def _heal_stale_modules() -> list[str]:
+    """Reload first-party modules when they're older than this UI.
+
+    reload() mutates the existing module object in place, so anything holding a
+    reference (crosscheck holds target_scorer, for instance) picks up the new
+    attributes without re-importing. Order matters: dependencies first, then the
+    modules that read from them.
+
+    Safe here because these modules expose functions and constants only — no
+    classes whose identity could split across a reload.
+    """
+    import importlib
+    stale = _stale_modules()
+    if not stale:
+        return []
+    for name in ("co_scientist.target_scorer", "co_scientist.hypothesis_scan",
+                 "co_scientist.assay", "co_scientist.freezer",
+                 "co_scientist.experiment", "co_scientist.crosscheck"):
+        try:
+            mod = sys.modules.get(name)
+            if mod is not None:
+                importlib.reload(mod)
+        except Exception:
+            pass          # a failed reload leaves the old module; guard reports it
+    return _stale_modules()
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO_ROOT / "data" / "geneformer"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1375,6 +1435,19 @@ with tab3:
     from co_scientist import hypothesis_scan as _hs
     from co_scientist import target_scorer
 
+    # Version skew shows up here first, because this tab uses the newest code.
+    # Heal it if we can; if not, say what to click instead of crashing with a
+    # redacted AttributeError.
+    _skew = _heal_stale_modules()
+    if _skew:
+        st.error(
+            "This server is running an older copy of Benchmate's modules than "
+            "the interface expects, so some models can't load.\n\n"
+            "**Fix:** on Streamlit Cloud, open *Manage app* (lower right) → "
+            "**Reboot app**. Locally, stop and restart `streamlit run`.\n\n"
+            + "\n".join(f"- `{s}`" for s in _skew))
+        st.stop()
+
     st.markdown("#### Score a hypothesis")
     st.caption("Pick a hypothesis, then run whichever models apply. Each box "
                "says what it needs and what it found.")
@@ -1519,10 +1592,16 @@ with tab3:
             elif not _genes:
                 st.caption("Waiting on a gene from the hypothesis above.")
         else:
+            # getattr, not attribute access: this branch runs precisely when
+            # something is missing, so it must not itself depend on a new
+            # attribute existing.
+            _sum_path = getattr(target_scorer, "DEPMAP_SUMMARY",
+                                target_scorer.DEPMAP_CSV.parent
+                                / "gene_effect_summary.csv")
             st.warning(
                 "No DepMap data found — this shouldn't happen, since a "
                 "precomputed summary ships with Benchmate. Expected it at "
-                f"`{target_scorer.DEPMAP_SUMMARY}`.")
+                f"`{_sum_path}`.")
             st.caption("To rebuild it: download CRISPRGeneEffect.csv from "
                        "[depmap.org](https://depmap.org/portal/data_page/) and "
                        "run `python -m benchmark.build_depmap_summary`.")
