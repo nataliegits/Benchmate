@@ -2,8 +2,8 @@
 from a bench result. LLM-backed (Claude, via co_scientist.llm).
 
 This is the reasoning at the two ends of the wet-lab loop:
-  design_experiment  — hypothesis  -> the cleanest alamarBlue test + reagents
-  refine_hypothesis  — result      -> a sharper hypothesis + the next test
+  design_experiment: hypothesis  -> the cleanest alamarBlue test + reagents
+  refine_hypothesis: result      -> a sharper hypothesis + the next test
 
 Both are constrained to what the DIY rig can actually do (a colorimetric
 viability readout), so the plans are runnable, not aspirational.
@@ -17,7 +17,7 @@ RIG_CAPABILITY = (
     "viability readout on a small DIY rig: dose cells with a COMPOUND from the "
     "freezer, incubate, add alamarBlue, and read the red/blue ratio over minutes. "
     "It measures metabolic viability (kill vs no-kill) across a few doses plus "
-    "controls — not mechanism, localisation, expression, or protein interactions.\n"
+    "controls: not mechanism, localisation, expression, or protein interactions.\n"
     "There is NO capacity for genetic manipulation: no shRNA/siRNA, no CRISPR, no "
     "transfection, no overexpression, no immunoblot, no co-IP, no pulse-chase.\n"
     "So if the hypothesis is genetic (a knockdown, an overexpression, a "
@@ -32,7 +32,7 @@ def project_evidence() -> str:
     hypothesis sits on the leaderboard, what the independent models said about
     it, and any bench results on record.
 
-    This is what makes the design step *informed* — without it the designer only
+    This is what makes the design step *informed*: without it the designer only
     sees a sentence of text and can't know that, say, three external models
     disagree with the idea it's about to test.
     """
@@ -48,7 +48,7 @@ def project_evidence() -> str:
                           key=lambda h: h.get("elo", 0), reverse=True)[:3]
             if hyps:
                 bits.append("Leaderboard (Elo):\n" + "\n".join(
-                    f"  {round(h.get('elo', 0))} — {h.get('statement','')[:110]}"
+                    f"  {round(h.get('elo', 0))}: {h.get('statement','')[:110]}"
                     for h in hyps))
         except Exception:
             pass
@@ -94,7 +94,7 @@ def design_experiment(hypothesis: str, evidence: str = "") -> dict:
     Pass `evidence` (see project_evidence()) so the design accounts for the
     ranking, the cross-check models, and anything already run at the bench.
     """
-    ev = (f"WHAT THE PROJECT ALREADY KNOWS — take this into account. If the "
+    ev = (f"WHAT THE PROJECT ALREADY KNOWS. Take this into account. If the "
           f"independent models disagree with this hypothesis, say so plainly in "
           f'"limitation" and design the comparison that would discriminate. '
           f"Never repeat an experiment already on record:\n{evidence}\n\n"
@@ -102,7 +102,7 @@ def design_experiment(hypothesis: str, evidence: str = "") -> dict:
     return call_json(
         f"Hypothesis to test:\n{hypothesis}\n\n{ev}{RIG_CAPABILITY}\n\n"
         "Design the cleanest alamarBlue experiment to test it.\n"
-        "FORMAT RULES — follow exactly:\n"
+        "FORMAT RULES: follow exactly:\n"
         "- Every value is a PLAIN STRING (or a list of plain strings). No nested "
         "objects.\n"
         "- Keep each value under 40 words. Be concrete, not exhaustive.\n"
@@ -110,20 +110,20 @@ def design_experiment(hypothesis: str, evidence: str = "") -> dict:
         "pharmacology; if no good small-molecule proxy exists for this hypothesis, "
         "say so in \"limitation\" rather than inventing one.\n\n"
         "Output a JSON object:\n"
-        '  "aim": one sentence — what this experiment decides,\n'
+        '  "aim": one sentence. What this experiment decides,\n'
         '  "cell_line": a real, appropriate human cell line to use,\n'
         '  "treatment": the compound + dose range + timepoint,\n'
         '  "comparison": the key treated-vs-control comparison that answers the aim,\n'
-        '  "controls": list of controls, each "name — why it\'s needed" '
+        '  "controls": list of controls, each "name. Why it\'s needed" '
         "(include a vehicle control and a positive control),\n"
-        '  "reagents_needed": list of reagent NAMES to pull from the freezer — the '
+        '  "reagents_needed": list of reagent NAMES to pull from the freezer. The '
         "experimental compounds only (assume alamarBlue, media, and plates are on "
         "hand),\n"
         '  "readout": what you measure, and which result would SUPPORT vs REFUTE '
         "the hypothesis,\n"
         '  "key_confound": the single artifact or confound most likely to fool you,\n'
         '  "limitation": what this viability assay CANNOT establish about the '
-        "hypothesis — say so plainly, especially if you substituted a "
+        "hypothesis: say so plainly, especially if you substituted a "
         "pharmacological proxy for a genetic manipulation.",
         role="generation", max_tokens=3000, temperature=0.4,
     )

@@ -6,7 +6,7 @@ LLM judge can be trusted at all. Useful, but it's not what you want when you're
 holding one hypothesis and deciding whether to spend a week of bench time on it.
 
 This module answers the second question. Give it a hypothesis; it finds the
-genes, asks each model that applies, and reports what each one said — including,
+genes, asks each model that applies, and reports what each one said: including,
 explicitly, which models don't apply and why. "Not applicable" and "broken" look
 identical if you don't say which one it is.
 
@@ -31,10 +31,10 @@ def model_status() -> list[dict]:
     exact thing needed if it isn't.
 
     `where` is the honest answer to "do I need a terminal for this?":
-      live   — runs in the app over a public API, nothing to install
-      file   — needs one data file downloaded from a website
-      colab  — needs a free API key and a generated notebook
-      key    — needs a paid API key
+      live: runs in the app over a public API, nothing to install
+      file: needs one data file downloaded from a website
+      colab: needs a free API key and a generated notebook
+      key: needs a paid API key
     """
     depmap_csv = target_scorer.DEPMAP_CSV
     model_csv = target_scorer.DEPMAP_MODEL_CSV
@@ -43,16 +43,16 @@ def model_status() -> list[dict]:
     rows = [
         {"model": "Open Targets", "asks": "Is this gene linked to the disease?",
          "where": "live", "available": target_scorer.opentargets_available(),
-         "setup": "Nothing — public API, no key, no download."},
+         "setup": "Nothing: public API, no key, no download."},
         {"model": "DepMap", "asks": "Do cancer cells need this gene to survive?",
          "where": "file", "available": target_scorer.depmap_available(),
          "setup": (f"Download CRISPRGeneEffect.csv (~440 MB) from "
-                   f"depmap.org/portal/data_page/ into {depmap_csv.parent}/ "
-                   f"— a browser download, no terminal needed.")},
+                   f"depmap.org/portal/data_page/ into {depmap_csv.parent}/. "
+                   f"That is a browser download, no terminal needed.")},
         {"model": "AlphaMissense",
          "asks": "Is this coding variant likely pathogenic?",
          "where": "live", "available": target_scorer.alphamissense_available(),
-         "setup": "Nothing — free Ensembl VEP API. Needs a variant, not just a gene."},
+         "setup": "Nothing: free Ensembl VEP API. Needs a variant, not just a gene."},
         {"model": "AlphaGenome",
          "asks": "Does this variant change gene expression?",
          "where": "colab", "available": False,
@@ -65,7 +65,7 @@ def model_status() -> list[dict]:
 
     # Call out the silent-degradation case: without Model.csv the dependency
     # score is a pan-cancer average, not myeloma-specific. It still returns a
-    # number, so nothing looks wrong — which is exactly the problem.
+    # number, so nothing looks wrong. Which is exactly the problem.
     for r in rows:
         if r["model"] == "DepMap" and r["available"] and not model_csv.exists():
             r["caveat"] = (
@@ -93,7 +93,7 @@ def read_opentargets(score: float) -> str:
 def read_depmap(score: float) -> str:
     # score is -mean(gene effect); higher = more essential
     if score >= 1.0:
-        return "strong dependency — cells die without it"
+        return "strong dependency, cells die without it"
     if score >= 0.5:
         return "moderate dependency"
     if score >= 0.2:
@@ -117,7 +117,7 @@ def gene_missense_burden(gene: str, max_variants: int = 5
     """Mean AlphaMissense pathogenicity across a gene's known ClinVar missense
     variants. Returns (mean, n_scored, why_not).
 
-    Every coordinate comes from ClinVar — nothing is generated. Capped at a
+    Every coordinate comes from ClinVar. Nothing is generated. Capped at a
     handful of variants because each one is a VEP round-trip and this runs
     inside a button click.
 
@@ -161,8 +161,8 @@ _gene_missense_burden = gene_missense_burden
 # ---------------------------------------------------------------------------
 # A score with no visible provenance is a black box, and a black box is exactly
 # what a cross-check is supposed to protect you from. Each explain_* below
-# returns the real steps taken — resolved identifiers, endpoints hit, how many
-# rows were averaged — so a number can be audited rather than trusted.
+# returns the real steps taken. Resolved identifiers, endpoints hit, how many
+# rows were averaged. So a number can be audited rather than trusted.
 
 def explain_opentargets(symbol: str, disease: str) -> dict:
     """Score `symbol` against `disease`, returning the score AND the lookup."""
@@ -182,11 +182,11 @@ def explain_opentargets(symbol: str, disease: str) -> dict:
     steps.append("Asked the GraphQL API for the overall association score "
                  "between those two ids")
     if score is not None:
-        steps.append(f"Returned **{score:.3f}** — {read_opentargets(score)}")
+        steps.append(f"Returned **{score:.3f}**: {read_opentargets(score)}")
     return {"score": score, "steps": steps,
             "endpoint": getattr(target_scorer, "OT_URL", "Open Targets GraphQL"),
             "detail": ("The score aggregates every evidence type Open Targets "
-                       "holds for this gene–disease pair: GWAS and rare-disease "
+                       "holds for this gene-disease pair: GWAS and rare-disease "
                        "genetics, differential expression, animal models, known "
                        "drugs, pathway membership and text-mined literature. It "
                        "is a weighted harmonic sum, so one strong line of "
@@ -223,7 +223,7 @@ def explain_depmap(symbol: str) -> dict:
             steps.append(f"Matrix read failed: {e}")
     elif src == "summary":
         steps.append("Read the precomputed per-gene summary that ships with "
-                     "Benchmate (`gene_effect_summary.csv`) — same DepMap "
+                     "Benchmate (`gene_effect_summary.csv`): same DepMap "
                      "numbers, condensed so no 440 MB download is needed")
         try:
             row = target_scorer._depmap_summary_frame().loc[symbol.upper()]
@@ -288,7 +288,7 @@ def explain_missense(gene: str, max_variants: int = 5) -> dict:
                        "needs one specific base change, so to say something "
                        "about a whole gene we take that gene's variants already "
                        "classified pathogenic in ClinVar and average their "
-                       "scores. Every coordinate is real — none are generated. "
+                       "scores. Every coordinate is real; none are generated. "
                        "A high average means coding changes here tend to be "
                        "damaging, which is evidence the protein matters.")}
 
@@ -311,7 +311,7 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
     # ---- Open Targets: gene x disease -------------------------------------
     if not target_scorer.opentargets_available():
         skipped.append({"model": "Open Targets",
-                        "why": "httpx not installed — can't reach the API."})
+                        "why": "httpx not installed. Can't reach the API."})
     elif not genes:
         skipped.append({"model": "Open Targets",
                         "why": "no gene named in the hypothesis."})
@@ -324,18 +324,18 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
             else:
                 rows.append({"model": "Open Targets", "target": g,
                              "score": round(v, 3), "reading": read_opentargets(v),
-                             "scale": "0–1, higher = stronger link"})
+                             "scale": "0-1, higher = stronger link"})
 
     # ---- DepMap: gene dependency -----------------------------------------
     if not target_scorer.depmap_available():
         # Be specific. This file is gitignored (440 MB), so it's present locally
-        # and absent on a hosted deploy — "not downloaded" is confusing if you
+        # and absent on a hosted deploy. "not downloaded" is confusing if you
         # know you downloaded it.
         _p = target_scorer.DEPMAP_CSV
         skipped.append({"model": "DepMap", "kind": "setup",
                         "why": (f"no CRISPR matrix at `{_p}`. It's a 440 MB file "
                                 f"excluded from git, so it has to be downloaded "
-                                f"once per machine — and it won't be present on "
+                                f"once per machine, and it won't be present on "
                                 f"a hosted deploy at all.")})
     elif not genes:
         skipped.append({"model": "DepMap",
@@ -355,7 +355,7 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
     # If the hypothesis names a variant, score that variant. If it only names a
     # gene, we can still get a real gene-level answer: pull that gene's known
     # pathogenic missense variants from ClinVar and score those. That says how
-    # damaging coding change in this gene tends to be — a genuine signal, from
+    # damaging coding change in this gene tends to be. A genuine signal, from
     # real coordinates, rather than "not applicable".
     if not variants and genes:
         for g in genes:
@@ -365,9 +365,9 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
             else:
                 rows.append({"model": "AlphaMissense", "target": f"{g} (gene-level)",
                              "score": round(mean, 3),
-                             "reading": (f"{read_alphamissense(mean)} — mean over "
+                             "reading": (f"{read_alphamissense(mean)}: mean over "
                                          f"{n} known ClinVar missense variants"),
-                             "scale": "0–1, >0.564 = likely pathogenic"})
+                             "scale": "0-1, >0.564 = likely pathogenic"})
     elif not variants:
         skipped.append({"model": "AlphaMissense",
                         "why": ("no gene or variant named, so there's nothing to "
@@ -378,24 +378,24 @@ def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
                 v["chrom"], v["pos"], v["ref"], v["alt"])
             if s is None:
                 skipped.append({"model": "AlphaMissense",
-                                "why": (f"{v['raw']} returned no score — it may "
+                                "why": (f"{v['raw']} returned no score. It may "
                                         f"not be a missense change.")})
             else:
                 rows.append({"model": "AlphaMissense", "target": v["raw"],
                              "score": round(s, 3),
                              "reading": read_alphamissense(s),
-                             "scale": "0–1, >0.564 = likely pathogenic"})
+                             "scale": "0-1, >0.564 = likely pathogenic"})
 
     # ---- the two that need external setup ---------------------------------
     skipped.append({"model": "AlphaGenome", "kind": "setup",
-                    "why": ("needs a free API key and runs in Colab — generate "
+                    "why": ("needs a free API key and runs in Colab. Use the Generate "
                             "the notebook below, then upload its scores.")})
     import os
     if not os.environ.get("BOLTZ_API_KEY"):
         skipped.append({"model": "Boltz", "kind": "setup",
                         "why": "needs a paid API key from api.boltz.bio."})
 
-    # Split "can't run" from "doesn't apply" — lumping them together makes a
+    # Split "can't run" from "doesn't apply". Lumping them together makes a
     # working panel look broken.
     for s in skipped:
         s.setdefault("kind", "na")
@@ -413,7 +413,7 @@ def verdict(result: dict) -> str:
     """
     rows = result["rows"]
     if not rows:
-        return ("No model could score this hypothesis yet — see the reasons "
+        return ("No model could score this hypothesis yet. See the reasons "
                 "below. That's a setup gap, not a judgement on the idea.")
     ot = [r for r in rows if r["model"] == "Open Targets"]
     dm = [r for r in rows if r["model"] == "DepMap"]
@@ -422,7 +422,7 @@ def verdict(result: dict) -> str:
 
     if ot and not strong_ot:
         return ("Open Targets has no meaningful association between these genes "
-                "and the disease. Worth asking why the ranking liked this — the "
+                "and the disease. Worth asking why the ranking liked it: the "
                 "link may be novel, or the hypothesis may be off.")
     if strong_ot and strong_dm:
         return ("Both the disease-association and dependency evidence back this. "
@@ -430,7 +430,7 @@ def verdict(result: dict) -> str:
                 "specific mechanism.")
     if strong_ot:
         return ("Disease association holds up, but these genes aren't strong "
-                "dependencies in these cell lines — expect a partial effect at "
+                "dependencies in these cell lines, so expect a partial effect at "
                 "the bench.")
     return ("Mixed signal across the models. Cheap to investigate now; "
             "expensive to discover after the experiment.")

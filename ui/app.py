@@ -29,7 +29,7 @@ from co_scientist.llm_config import model_for, _DEFAULT_ROLE_MODELS
 def _clean_reagent(raw) -> str:
     """Reduce a designed reagent line to just the compound name.
 
-    The designer writes for a human — "Kifunensine (10 uM) - blocks mannose
+    The designer writes for a human. "Kifunensine (10 uM) - blocks mannose
     trimming", "Bortezomib, 5 nM, positive control". The freezer matcher is
     comparing against cap labels like "kifunensine", so that extra prose is
     what makes a reagent on the shelf come back as "not in this box".
@@ -39,7 +39,12 @@ def _clean_reagent(raw) -> str:
     if not s:
         return ""
     # drop anything after a dash/colon separator, or a parenthetical
-    s = _re.split(r"\s+[—–-]\s+|:\s|\s*\(", s)[0]
+    # \u2014 is the em dash, \u2013 the en dash, then plain hyphen. Written as escapes
+    # rather than literal characters, so this stays ASCII source while still
+    # matching the dashes an LLM actually writes. (A bulk de-em-dash pass once
+    # collapsed this class to [---], a malformed range that silently stopped
+    # matching em/en dashes and emitted a FutureWarning.)
+    s = _re.split(r"\s+[\u2014\u2013-]\s+|:\s|\s*\(", s)[0]
     # drop trailing dose / concentration fragments
     s = _re.sub(r"[,;]?\s*\d+(\.\d+)?\s*(n|u|µ|m)?[mM](ol)?\b.*$", "", s)
     s = _re.sub(r"[,;]\s*(vehicle|positive|negative)\s+control.*$", "", s,
@@ -52,7 +57,7 @@ def _stale_modules() -> list[str]:
 
     Streamlit re-executes this file on every rerun but leaves already-imported
     modules in sys.modules. On Streamlit Cloud that means a fresh deploy can run
-    a new app.py against the previous session's co_scientist package — which
+    a new app.py against the previous session's co_scientist package: which
     surfaces as a redacted AttributeError deep in a tab, with no hint that a
     reboot is all that's needed.
 
@@ -88,7 +93,7 @@ def _heal_stale_modules() -> list[str]:
     attributes without re-importing. Order matters: dependencies first, then the
     modules that read from them.
 
-    Safe here because these modules expose functions and constants only — no
+    Safe here because these modules expose functions and constants only: no
     classes whose identity could split across a reload.
     """
     import importlib
@@ -113,7 +118,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="Benchmate", layout="wide")
 
-# Inter for body text, Source Serif 4 for display — matches the editorial
+# Inter for body text, Source Serif 4 for display. Matches the editorial
 # research-tool aesthetic (Elicit-style). Loaded from Google Fonts; falls
 # back to system sans if blocked.
 st.markdown(
@@ -140,7 +145,27 @@ st.markdown(
             font-family: 'JetBrains Mono', 'SF Mono', Menlo,
                          monospace !important;
         }
-        /* Monochrome editorial — ink primary buttons */
+        /* Tab labels: same Inter face and weight as the Benchmate title, so
+           the top-level navigation reads as headings rather than as small
+           grey UI chrome. Streamlit renders the label in a nested <p>, which
+           is why the rule has to reach inside the button. */
+        .stTabs [data-baseweb="tab"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif !important;
+            font-weight: 600 !important;
+            letter-spacing: -0.01em;
+        }
+        .stTabs [data-baseweb="tab"] p {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif !important;
+            font-weight: 600 !important;
+            letter-spacing: -0.01em;
+        }
+        /* selected tab in full ink, the rest a step back */
+        .stTabs [aria-selected="true"] p { color: #111111 !important; }
+        .stTabs [aria-selected="false"] p { color: #6b6b6b !important; }
+
+        /* Monochrome editorial. Ink primary buttons */
         .stButton button[kind="primary"] {
             background-color: #111111;
             border-color: #111111;
@@ -166,7 +191,7 @@ st.title("Benchmate")
 st.markdown(
     "<p style='color:#555555; font-size:1.05rem; margin-top:-8px; "
     "font-family: Inter, sans-serif;'>"
-    "Your AI lab coworker — from question, to hypothesis, to bench, and back."
+    "Your AI lab coworker. From question, to hypothesis, to bench, and back."
     "</p>",
     unsafe_allow_html=True,
 )
@@ -176,7 +201,7 @@ st.markdown("<div style='margin-bottom:12px;'></div>", unsafe_allow_html=True)
 
 def step_intro(text: str, step: str = "", nxt: str = ""):
     """The description shown when you open a tab: what this step does to your
-    hypothesis, and where it leads. Replaces a header banner — the explanation
+    hypothesis, and where it leads. Replaces a header banner. The explanation
     lives where the work is, so nothing looks clickable that isn't."""
     head = f"Step {step} · " if step else ""
     tail = (f"<div style='margin-top:8px;font-size:14px;color:#777;'>"
@@ -292,7 +317,7 @@ with st.sidebar:
                 os.environ[f"BENCHMATE_MODEL_{role.upper()}"] = choice
         st.caption(
             "Generation, Reflection, and Evolution benefit most from a "
-            "strong model — they read the Geneformer evidence. The others "
+            "strong model, because they read the Geneformer evidence. The others "
             "can run cheaper without measurable quality loss."
         )
 
@@ -324,12 +349,12 @@ tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 
-# ── Benchmate anchor — one agent, reachable from every tab ───
+# ── Benchmate anchor. One agent, reachable from every tab ───
 def benchmate_anchor(where: str, suggestions: str = ""):
     """A collapsible Benchmate assistant pinned into a tab.
 
     One shared conversation and one shared approval queue across every tab, so
-    it's the same colleague wherever you are — it just also knows which page
+    it's the same colleague wherever you are. It just also knows which page
     you're on. Reads run instantly; anything that spends credits or writes
     evidence waits for you.
     """
@@ -339,13 +364,13 @@ def benchmate_anchor(where: str, suggestions: str = ""):
     st.session_state.setdefault("pending", None)
     pend = st.session_state.pending
     n = len(st.session_state.chat)
-    label = ("Benchmate — waiting for your approval" if pend
+    label = ("Benchmate. Waiting for your approval" if pend
              else f"Ask Benchmate{f'  ({n})' if n else ''}")
 
     with st.expander(label, expanded=bool(pend)):
         st.caption(
-            "This is the assistant, not a form. It can see your whole project — "
-            "the leaderboard, bench results, and freezer — so use it to *ask about* "
+            "This is the assistant, not a form. It can see your whole project: "
+            "the leaderboard, bench results, and freezer, so use it to *ask about* "
             "or *steer* this step, in plain language. (The fields above are the "
             "actual inputs.)"
         )
@@ -445,10 +470,10 @@ def _project_context() -> str:
                 + st.session_state.get("loop_box_name", "demo_drug_box.csv"))
     return "\n".join(bits)
 
-# ── Tab 0 — guided flow ──────────────────────────────────────
+# ── Tab 0. Guided flow ──────────────────────────────────────
 with tab0:
-    step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against — then pre-fills the other tabs.", "1 of 5", "Add evidence")
-    st.header("Start here — from question to cross-checked hypotheses")
+    step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against. Then pre-fills the other tabs.", "1 of 5", "Add evidence")
+    st.header("Start here: from question to cross-checked hypotheses")
     st.write(
         "Type a research question. Benchmate reads it and lays out the exact "
         "steps: which genes to perturb, in which cell type, and which models "
@@ -503,12 +528,12 @@ with tab0:
         xchecks = plan.get("cross_check", []) or []
 
         st.divider()
-        st.caption("Your path — three steps. Each fills the right tab for you.")
+        st.caption("Your path: three steps. Each fills the right tab for you.")
 
         with st.container(border=True):
-            st.markdown("**1 · Generate your evidence**  —  New perturbation tab")
+            st.markdown("**1 · Generate your evidence**: New perturbation tab")
             st.markdown(
-                f"Perturb **{', '.join(genes) or '—'}** in **{cell}**, "
+                f"Perturb **{', '.join(genes) or '-'}** in **{cell}**, "
                 "then download and run the notebook."
             )
             if plan.get("cell_reason"):
@@ -519,9 +544,9 @@ with tab0:
                 st.success("Filled. Open the New perturbation tab above.")
 
         with st.container(border=True):
-            st.markdown("**2 · Generate & rank hypotheses**  —  Run Benchmate tab")
+            st.markdown("**2 · Generate & rank hypotheses**: Run Benchmate tab")
             st.markdown(
-                f"Run **{iters} iterations** on your question — the agents "
+                f"Run **{iters} iterations** on your question. The agents "
                 "propose hypotheses and rank them by Elo."
             )
             if st.button("Prefill the Run Benchmate tab", key="sh_fill2"):
@@ -535,11 +560,11 @@ with tab0:
                                   + ", ".join(genes) + ".")
                 st.session_state.goal = goal_text
                 st.session_state.run_iterations = iters
-                st.success("Filled — including your focus genes, so the run "
+                st.success("Filled: including your focus genes, so the run "
                            "picks up their perturbation data.")
 
         with st.container(border=True):
-            st.markdown("**3 · Cross-check the winners**  —  Cross-check tab")
+            st.markdown("**3 · Cross-check the winners**: Cross-check tab")
             if xchecks:
                 for x in xchecks:
                     st.markdown(
@@ -652,7 +677,7 @@ with tab1:
     st.divider()
     benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
 
-# ── Tab 2 — Run Benchmate ────────────────────────────────────
+# ── Tab 2. Run Benchmate ────────────────────────────────────
 with tab2:
     step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Stress-test")
     st.header("Run the Co-Scientist loop")
@@ -668,8 +693,7 @@ with tab2:
 
     # A run takes minutes. Two things made that look like a dead button:
     # the child's stdout is block-buffered when piped, so nothing appeared for
-    # ages, and reading it line-by-line blocked the whole Streamlit script —
-    # freezing the page. So: launch detached, log to a file, and poll.
+    # ages, and reading it line-by-line blocked the whole Streamlit script. # freezing the page. So: launch detached, log to a file, and poll.
     RUN_LOG = REPO_ROOT / ".benchmate_run.log"
     _proc = st.session_state.get("run_proc")
     _running = _proc is not None and _proc.poll() is None
@@ -687,7 +711,7 @@ with tab2:
         elif not (os.environ.get("ANTHROPIC_API_KEY")
                   or (REPO_ROOT / ".env").exists()):
             st.error("No ANTHROPIC_API_KEY found. Add it in the sidebar or "
-                     "your .env file — the run would fail immediately.")
+                     "your .env file. The run would fail immediately.")
         else:
             _fh = open(RUN_LOG, "w")
             st.session_state.run_proc = subprocess.Popen(
@@ -709,7 +733,7 @@ with tab2:
         _rc = _proc.poll()
         if _rc is None:
             _el = int(time.time() - st.session_state.get("run_started", time.time()))
-            st.info(f"Running — {_el // 60}m {_el % 60}s elapsed. "
+            st.info(f"Running: {_el // 60}m {_el % 60}s elapsed. "
                     f"This refreshes itself; you can switch tabs and come back.")
             st.code(_tail or "starting up (loading models, first API call)…")
             time.sleep(2.5)
@@ -731,7 +755,7 @@ with tab2:
                  f"The log below says why.")
     elif st.session_state.get("run_ok"):
         st.success("Benchmate finished.")
-    # keep the log reachable after the run ends — it's the only place a crash
+    # keep the log reachable after the run ends. It's the only place a crash
     # or a rate-limit message shows up
     if RUN_LOG.exists() and st.session_state.get("run_proc") is None:
         with st.expander("Run log", expanded=st.session_state.get("run_ok") is False):
@@ -761,7 +785,7 @@ with tab2:
             df = pd.DataFrame(rows)
             st.subheader(f"Top {len(hyps)} hypotheses")
             st.caption("Loaded from the last completed run "
-                       "(`state.json`) — this persists across tab "
+                       "(`state.json`): this persists across tab "
                        "switches and app restarts.")
             st.dataframe(
                 df,
@@ -794,8 +818,8 @@ with tab2:
             # Per-hypothesis expand for rationale + experiment
             for i, h in enumerate(hyps, 1):
                 with st.expander(
-                    f"#{i} — Elo {round(h.get('elo', 0), 0):.0f} "
-                    f"— rationale + experiment"
+                    f"#{i}: Elo {round(h.get('elo', 0), 0):.0f} "
+                    f"rationale + experiment"
                 ):
                     st.markdown("**Rationale**")
                     st.markdown(h.get("rationale", ""))
@@ -819,8 +843,8 @@ def _benchmark_section():
     st.header("Is the Elo leaderboard trustworthy?")
     st.write(
         "The simulator replays Benchmate's **real** `elo.py` against synthetic "
-        "hypotheses whose true quality we control — for free, thousands of "
-        "times — so you can see how match budget, K-factor, and judge skill "
+        "hypotheses whose true quality we control. For free, thousands of "
+        "times, so you can see how match budget, K-factor, and judge skill "
         "move ranking accuracy and repeatability before spending API credits."
     )
     st.caption(
@@ -846,12 +870,12 @@ def _benchmark_section():
             help="More replicates = tighter error bars but a slower run."
         )
 
-    st.markdown("**Pick a study** — what question do you want the simulator to answer?")
+    st.markdown("**Pick a study**: what question do you want the simulator to answer?")
     study = st.radio(
         "Study",
-        ["Match budget — how many matches do I need?",
-         "K-factor — does the 40/20/10 schedule matter?",
-         "Judge quality — how badly does a weak / biased judge hurt?"],
+        ["Match budget: how many matches do I need?",
+         "K-factor: does the 40/20/10 schedule matter?",
+         "Judge quality: how badly does a weak / biased judge hurt?"],
         label_visibility="collapsed",
     )
 
@@ -941,7 +965,7 @@ def _benchmark_section():
             )
         else:
             st.info(
-                "**Read:** judge skill is the accuracy ceiling — improving "
+                "**Read:** judge skill is the accuracy ceiling. Improving "
                 "the judge buys as much as doubling the match budget. The "
                 "fair judge (default) neutralises position bias by judging "
                 "each pair in both orders."
@@ -959,7 +983,7 @@ def _benchmark_section():
         run = bench_results.latest(name)
         if not run:
             if IS_HOSTED:
-                st.caption("No saved run yet — run this locally to populate the "
+                st.caption("No saved run yet. Run this locally to populate the "
                            "hosted demo.")
             return
         p = run.get("params", {})
@@ -978,8 +1002,8 @@ def _benchmark_section():
         st.info(
             "**Hosted demo.** Each section shows results captured on a local "
             "run (saved in the repo). Want to run them live yourself? Enter "
-            "**your own** Anthropic key in the sidebar — you pay only for your "
-            "own calls — and the key-only benchmarks below unlock. The ontology "
+            "**your own** Anthropic key in the sidebar. You pay only for your "
+            "own calls, and the key-only benchmarks below unlock. The ontology "
             "comparison additionally needs a local OntoMCP server (see its "
             "section), so it can't run on the hosted site."
         )
@@ -987,7 +1011,7 @@ def _benchmark_section():
         st.caption(
             "These run on the ERAD gold set in `benchmark/gold_set.py` and need "
             "an Anthropic key (set in the sidebar). Ranking calls use Haiku, "
-            "so the spend is small — the estimates below are upper bounds. "
+            "so the spend is small. The estimates below are upper bounds. "
             "Each run is saved to `benchmark/results/`, which is what the "
             "hosted demo displays."
         )
@@ -1000,7 +1024,7 @@ def _benchmark_section():
     # ---- 1. Judge accuracy ------------------------------------------------
     with st.container(border=True):
         st.markdown(
-            "**1. Judge accuracy** — is the LLM judge any good? "
+            "**1. Judge accuracy**: is the LLM judge any good? "
             "Measures accuracy on clear cross-tier pairs, position-bias rate "
             "(how often the verdict flips when you swap A/B), self-consistency, "
             "and transitivity violations."
@@ -1011,7 +1035,7 @@ def _benchmark_section():
                              help="More pairs = tighter estimates but more spend.")
         je_cost = 0.001 * (je_pairs * 4 + 30)        # ~4 calls/pair + transitivity sweep
         st.caption(f"Estimated Anthropic spend: ~${je_cost:.2f}. "
-                   f"Expected runtime: ~{max(1, je_pairs // 2)}–"
+                   f"Expected runtime: ~{max(1, je_pairs // 2)}-"
                    f"{je_pairs} minutes.")
         if st.button("Run judge-eval", type="primary",
                      disabled=not os.environ.get("ANTHROPIC_API_KEY"),
@@ -1049,7 +1073,7 @@ def _benchmark_section():
     # ---- 2. Validate vs gold ---------------------------------------------
     with st.container(border=True):
         st.markdown(
-            "**2. Validate vs gold** — rank the ERAD gold set end-to-end "
+            "**2. Validate vs gold**: rank the ERAD gold set end-to-end "
             "and score the leaderboard against the known tier order. Use "
             "as a regression test after any prompt or model change."
         )
@@ -1119,7 +1143,7 @@ def _benchmark_section():
     # ---- 3. Compare fair vs naive ----------------------------------------
     with st.container(border=True):
         st.markdown(
-            "**3. Compare fair vs naive judge** — same gold set, ranked "
+            "**3. Compare fair vs naive judge**: same gold set, ranked "
             "under both judges. Δ Spearman tells you whether the "
             "order-swap is actually buying accuracy."
         )
@@ -1161,15 +1185,15 @@ def _benchmark_section():
                 rho_fair = score(h2)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("naive judge — spearman", f"{rho_naive:+.2f}")
-            c2.metric("fair judge — spearman", f"{rho_fair:+.2f}")
+            c1.metric("naive judge: spearman", f"{rho_naive:+.2f}")
+            c2.metric("fair judge: spearman", f"{rho_fair:+.2f}")
             c3.metric("Δ (fair − naive)", f"{rho_fair - rho_naive:+.2f}",
                       delta=f"{rho_fair - rho_naive:+.2f}")
             bench_results.save_run("compare_fair_naive", {
                 "label": "Fair vs naive judge",
                 "params": {"cycles": int(cm_cycles), "matches/cycle": int(cm_npc)},
-                "metrics": {"naive — spearman": f"{rho_naive:+.2f}",
-                            "fair — spearman": f"{rho_fair:+.2f}",
+                "metrics": {"naive: spearman": f"{rho_naive:+.2f}",
+                            "fair: spearman": f"{rho_fair:+.2f}",
                             "Δ (fair − naive)": f"{rho_fair - rho_naive:+.2f}"},
             })
             if rho_fair > rho_naive:
@@ -1177,14 +1201,14 @@ def _benchmark_section():
             elif rho_fair < rho_naive:
                 st.warning(
                     "Fair judge underperformed in this run. Re-run a few "
-                    "times — a single comparison is one noisy sample. "
+                    "times, because a single comparison is one noisy sample. "
                     "Trust the median of 3+ runs."
                 )
 
     # ---- 4. Ontology grounding (structured-knowledge layer) --------------
     with st.container(border=True):
         st.markdown(
-            "**4. Ontology grounding** — the fair judge ranks the same gold "
+            "**4. Ontology grounding**: the fair judge ranks the same gold "
             "set with vs without a canonical 'known-biology' block "
             "(genes / diseases / pathways resolved via "
             "[OntoMCP](https://github.com/jeanlouishoneine-tech/OntoMCP)) "
@@ -1241,16 +1265,16 @@ def _benchmark_section():
                 rho_onto = score(h2)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("grounding OFF — spearman", f"{rho_base:+.2f}")
-            c2.metric("grounding ON — spearman", f"{rho_onto:+.2f}")
+            c1.metric("grounding OFF: spearman", f"{rho_base:+.2f}")
+            c2.metric("grounding ON: spearman", f"{rho_onto:+.2f}")
             c3.metric("Δ (ON − OFF)", f"{rho_onto - rho_base:+.2f}",
                       delta=f"{rho_onto - rho_base:+.2f}")
             bench_results.save_run("compare_ontology", {
                 "label": "Ontology grounding (fair judge, OFF vs ON)",
                 "params": {"cycles": int(on_cycles),
                            "matches/cycle": int(on_npc)},
-                "metrics": {"grounding OFF — spearman": f"{rho_base:+.2f}",
-                            "grounding ON — spearman": f"{rho_onto:+.2f}",
+                "metrics": {"grounding OFF. Spearman": f"{rho_base:+.2f}",
+                            "grounding ON: spearman": f"{rho_onto:+.2f}",
                             "Δ (ON − OFF)": f"{rho_onto - rho_base:+.2f}"},
             })
             if rho_onto > rho_base:
@@ -1259,7 +1283,7 @@ def _benchmark_section():
             elif rho_onto < rho_base:
                 st.warning(
                     "Grounding underperformed in this run. One comparison "
-                    "is one noisy sample — trust the median of 3+ runs."
+                    "is one noisy sample. Trust the median of 3+ runs."
                 )
             else:
                 st.info("No difference this run. Re-run a few times before "
@@ -1268,7 +1292,7 @@ def _benchmark_section():
     # ---- 5. Ontology discrimination (traps vs novelty) -------------------
     with st.container(border=True):
         st.markdown(
-            "**5. Ontology discrimination** — the honest version of #4. Ranks an "
+            "**5. Ontology discrimination**: the honest version of #4. Ranks an "
             "adversarial set with three kinds of hypothesis (solid, fluent-but-"
             "**false** traps, and **novel**-but-true) and asks: does grounding "
             "sink the traps **without** punishing the novel ideas? "
@@ -1301,9 +1325,9 @@ def _benchmark_section():
                 res = summarize(off, on)
                 c1, c2, c3 = st.columns(3)
                 c1.metric("trap demotion", f"{res['trap_demotion']:+.1f}",
-                          help="Want > 0 — grounding sinks the false traps.")
+                          help="Want > 0. Grounding sinks the false traps.")
                 c2.metric("novelty penalty", f"{res['novelty_penalty']:+.1f}",
-                          help="Want ~0 — grounding leaves novel ideas alone.")
+                          help="Want ~0: grounding leaves novel ideas alone.")
                 c3.metric("spearman ON", f"{res['spearman_on']:+.2f}",
                           delta=f"{res['spearman_on'] - res['spearman_off']:+.2f}")
                 bench_results.save_run("discrimination", {
@@ -1316,20 +1340,20 @@ def _benchmark_section():
                 if res["trap_demotion"] > 0 and res["novelty_penalty"] <= 0.75:
                     st.success("Grounding caught the traps without punishing novelty.")
                 elif res["trap_demotion"] <= 0:
-                    st.warning("Grounding didn't demote the traps — coverage / "
+                    st.warning("Grounding didn't demote the traps. Coverage / "
                                "placement issue. (One run is one noisy sample.)")
                 else:
-                    st.warning("Traps sank but novel ideas dropped too — the "
+                    st.warning("Traps sank but novel ideas dropped too. The "
                                "consensus-filter risk. Try grounding in review only.")
 
     # ---- 6. Alias / duplicate detection ----------------------------------
     with st.container(border=True):
         st.markdown(
-            "**6. Alias / duplicate detection** — where the ontology beats text "
+            "**6. Alias / duplicate detection**: where the ontology beats text "
             "similarity. Two hypotheses can be the *same idea* worded differently "
             "(\"multiple myeloma\" vs \"plasma cell myeloma\"). The metric is "
             "**separation**: how much higher a method scores true duplicates than "
-            "unrelated pairs. No API key needed — just embeddings + OntoMCP lookups."
+            "unrelated pairs. No API key needed. Just embeddings + OntoMCP lookups."
         )
         _show_saved("alias_dedup")
         if st.button("Run alias-dedup", key="al_btn"):
@@ -1371,9 +1395,9 @@ def _benchmark_section():
         "(`python -m benchmark.run_benchmark <subcommand>`)."
     )
 
-# ── Tab 3 — Cross-check your hypotheses ──────────────────────
+# ── Tab 3. Cross-check your hypotheses ──────────────────────
 with tab3:
-    step_intro("your hypothesis has a rank &mdash; now find out whether five independent models back it, and whether the ranking itself is reliable.", "4 of 5", "Run experiment")
+    step_intro("your hypothesis has a rank: now find out whether five independent models back it, and whether the ranking itself is reliable.", "4 of 5", "Run experiment")
     from benchmark import results as bench_results
     from benchmark.elo_vs_variant_score import correlate, _load, _demo
     IS_HOSTED = bool(os.environ.get("BENCHMATE_HOSTED"))
@@ -1382,7 +1406,7 @@ with tab3:
         run = bench_results.latest(name)
         if not run:
             if IS_HOSTED:
-                st.caption("No saved run yet — run this locally to populate the demo.")
+                st.caption("No saved run yet. Run this locally to populate the demo.")
             return
         p = run.get("params", {})
         bits = ", ".join(f"{k}={v}" for k, v in p.items())
@@ -1413,7 +1437,7 @@ with tab3:
     st.markdown(
         "The Elo leaderboard is the LLM judge's opinion. Before trusting it to pick "
         "a wet-lab candidate, cross-check it against **independent quantitative "
-        "models** — each scoring a hypothesis from a completely different angle. "
+        "models**: each scoring a hypothesis from a completely different angle. "
         "Low correlation = a flag. This is the *panel of judges*."
     )
 
@@ -1428,12 +1452,13 @@ with tab3:
 
     # ---- Score one real hypothesis, live ------------------------------------
     # One box per model. Each shows what it pulled out of your hypothesis, what
-    # question it answers, and its own run button — because a single combined
+    # question it answers, and its own run button. Because a single combined
     # button made four of the five models look broken when they were simply
     # answering a different question or waiting on a key.
     from co_scientist import crosscheck as _xc
     from co_scientist import hypothesis_scan as _hs
     from co_scientist import target_scorer
+    from benchmark import live_scores as _live
 
     # Version skew shows up here first, because this tab uses the newest code.
     # Heal it if we can; if not, say what to click instead of crashing with a
@@ -1475,7 +1500,7 @@ with tab3:
             for _k in ("xc_ot", "xc_dm", "xc_am"):
                 st.session_state.pop(_k, None)
     else:
-        st.caption("No leaderboard yet — run **Generate & rank** first, or paste "
+        st.caption("No leaderboard yet. Run **Generate & rank** first, or paste "
                    "a hypothesis below.")
     st.session_state.setdefault("xc_text", "")
     st.text_area("Hypothesis", key="xc_text", height=80)
@@ -1493,7 +1518,7 @@ with tab3:
                         + ", ".join(f"`{v['raw']}`" for v in _scan["variants"]))
                        if _scan["variants"] else ""))
         if not _scan.get("validated", True):
-            st.caption("⚠ Symbols matched by pattern only — the gene validator "
+            st.caption("⚠ Symbols matched by pattern only. The gene validator "
                        "was unreachable, so one may not be a real gene.")
         if not _genes:
             st.caption("Name the gene explicitly (e.g. `SEL1L`, not "
@@ -1543,10 +1568,10 @@ with tab3:
 
     # ---------------- Open Targets ----------------
     with st.container(border=True):
-        st.markdown("**Open Targets** — *"
+        st.markdown("**Open Targets**: *"
                     + _q("is {g} actually linked to this disease?") + "*")
         st.caption("Public API · nothing to install · genetics, literature and "
-                   "known drugs, aggregated into one 0–1 association score.")
+                   "known drugs, aggregated into one 0-1 association score.")
         _c1, _c2 = st.columns([2, 1])
         _dis = _c1.text_input("Disease", value=_xc.DEFAULT_DISEASE,
                               key="xc_disease", label_visibility="collapsed",
@@ -1567,13 +1592,17 @@ with tab3:
                     else:
                         _rows.append({"target": _g, "score": round(_v, 3),
                                       "reading": _xc.read_opentargets(_v)})
+                _elo = _live.elo_for_statement(_htext)
+                for _row in _rows:
+                    _live.record("Open Targets", _htext[:120], _elo,
+                                 _row["score"], _row["target"])
                 st.session_state["xc_ot"] = {"rows": _rows, "problems": _probs,
                                              "exps": _exps}
         _r = st.session_state.get("xc_ot")
         if _r:
             if _r["rows"]:
                 _score_table(_r["rows"])
-                st.caption("0–1, higher = stronger evidence the gene is involved "
+                st.caption("0-1, higher = stronger evidence the gene is involved "
                            "in this disease. 0.0 means resolved cleanly with "
                            "nothing on record.")
             _show_work(_r.get("exps"), "this score")
@@ -1584,7 +1613,7 @@ with tab3:
 
     # ---------------- DepMap ----------------
     with st.container(border=True):
-        st.markdown("**DepMap** — *"
+        st.markdown("**DepMap**: *"
                     + _q("do cancer cells actually need {g} to survive?") + "*")
         _dm_ok = target_scorer.depmap_available()
         if _dm_ok:
@@ -1610,6 +1639,10 @@ with tab3:
                         else:
                             _rows.append({"target": _g, "score": round(_v, 3),
                                           "reading": _xc.read_depmap(_v)})
+                    _elo = _live.elo_for_statement(_htext)
+                    for _row in _rows:
+                        _live.record("DepMap", _htext[:120], _elo,
+                                     _row["score"], _row["target"])
                     st.session_state["xc_dm"] = {"rows": _rows,
                                                  "problems": _probs, "exps": _exps}
             _r = st.session_state.get("xc_dm")
@@ -1631,7 +1664,7 @@ with tab3:
                                 target_scorer.DEPMAP_CSV.parent
                                 / "gene_effect_summary.csv")
             st.warning(
-                "No DepMap data found — this shouldn't happen, since a "
+                "No DepMap data found. This shouldn't happen, since a "
                 "precomputed summary ships with Benchmate. Expected it at "
                 f"`{_sum_path}`.")
             st.caption("To rebuild it: download CRISPRGeneEffect.csv from "
@@ -1640,12 +1673,12 @@ with tab3:
 
     # ---------------- AlphaMissense ----------------
     with st.container(border=True):
-        st.markdown("**AlphaMissense** — *"
+        st.markdown("**AlphaMissense**: *"
                     + _q("would coding changes in {g} be damaging?") + "*")
         st.caption("Free Ensembl VEP API · nothing to install. It scores one base "
                    "change at a time, so for a gene we score that gene's known "
                    "pathogenic missense variants from ClinVar and average them. "
-                   "Real coordinates only — nothing is generated.")
+                   "Real coordinates only. Nothing is generated.")
         _sv = _scan["scoreable_variants"]
         if _sv:
             st.caption(f"This hypothesis names coordinates ({_sv[0]['raw']}), so "
@@ -1659,7 +1692,7 @@ with tab3:
                         _s = target_scorer.alphamissense_score(
                             _v["chrom"], _v["pos"], _v["ref"], _v["alt"])
                         if _s is None:
-                            _probs.append(f"{_v['raw']}: no score — it may not be "
+                            _probs.append(f"{_v['raw']}: no score. It may not be "
                                           f"a missense change.")
                         else:
                             _rows.append({"target": _v["raw"], "score": round(_s, 3),
@@ -1676,15 +1709,19 @@ with tab3:
                             _rows.append({
                                 "target": f"{_g} (gene-level)",
                                 "score": round(_m, 3),
-                                "reading": (f"{_xc.read_alphamissense(_m)} — mean "
+                                "reading": (f"{_xc.read_alphamissense(_m)}: mean "
                                             f"over {_n} ClinVar variants")})
+                _elo = _live.elo_for_statement(_htext)
+                for _row in _rows:
+                    _live.record("AlphaMissense", _htext[:120], _elo,
+                                 _row["score"], _row["target"])
                 st.session_state["xc_am"] = {"rows": _rows, "problems": _probs,
                                              "exps": _exps}
         _r = st.session_state.get("xc_am")
         if _r:
             if _r["rows"]:
                 _score_table(_r["rows"])
-                st.caption("0–1. Above 0.564 is AlphaMissense's "
+                st.caption("0-1. Above 0.564 is AlphaMissense's "
                            "likely-pathogenic threshold; below 0.34 is likely "
                            "benign.")
             _show_work(_r.get("exps"), "this score")
@@ -1695,14 +1732,14 @@ with tab3:
 
     # ---------------- AlphaGenome ----------------
     with st.container(border=True):
-        st.markdown("**AlphaGenome** — *"
+        st.markdown("**AlphaGenome**: *"
                     + _q("would a regulatory variant change {g} expression?") + "*")
         st.caption("Needs a free API key and Python 3.10+, so it runs in Colab. "
                    "Benchmate writes the notebook against real GTEx eQTLs for "
                    "your genes; you run it and bring back the scores.")
         st.markdown("Get a free key from [DeepMind]"
                     "(https://deepmind.google.com/science/alphagenome/) "
-                    "(non-commercial use) — the notebook prompts you for it.")
+                    "(non-commercial use): the notebook prompts you for it.")
 
         _ag_genes = list(_genes)
         _src_label = "the hypothesis above"
@@ -1720,7 +1757,7 @@ with tab3:
             except Exception:
                 _src_label = "nothing yet"
 
-        st.caption(f"Genes from **{_src_label}** — edit freely.")
+        st.caption(f"Genes from **{_src_label}**: edit freely.")
         _ag_txt = st.text_input("Genes to score (comma-separated)",
                                 value=", ".join(_ag_genes), key="ag_nb_genes")
         _ag_list = [g.strip().upper() for g in _ag_txt.split(",") if g.strip()]
@@ -1740,24 +1777,24 @@ with tab3:
                 if gh_available():
                     with st.spinner("Opening it in Colab…"):
                         _h = handoff(_p, description=(
-                            f"Benchmate AlphaGenome scoring — "
+                            f"Benchmate AlphaGenome scoring: "
                             f"{', '.join(_ag_list) or 'ERAD benchmark set'}"))
                     st.session_state["ag_colab_url"] = _h["colab_url"]
             except GhUnavailable:
-                pass          # no gist creds — the download fallback still works
+                pass          # no gist creds. The download fallback still works
             except Exception as ex:
                 st.session_state.pop("ag_nb_path", None)
                 st.error(str(ex))
         _agp = st.session_state.get("ag_nb_path")
         if _agp and Path(_agp).exists():
             _pth = Path(_agp)
-            st.success(f"`{_pth.name}` — {st.session_state.get('ag_nb_n', '?')} "
+            st.success(f"`{_pth.name}`: {st.session_state.get('ag_nb_n', '?')} "
                        f"variants, each a real GTEx eQTL.")
             _cu = st.session_state.get("ag_colab_url")
             if _cu:
                 st.link_button("▶ Open in Colab", _cu, type="primary",
                                use_container_width=True)
-                st.caption("Opens ready to run — no download, no upload. Run top "
+                st.caption("Opens ready to run. No download, no upload. Run top "
                            "to bottom and it produces "
                            "`alphagenome_scores.json`.")
             else:
@@ -1773,30 +1810,30 @@ with tab3:
                        "**Calibration** below.")
         if not _ag_list:
             st.caption("With no genes it falls back to the built-in ERAD "
-                       "benchmark set — right for calibration, but it won't "
+                       "benchmark set: right for calibration, but it won't "
                        "reflect your question.")
 
     # ---------------- Boltz ----------------
     with st.container(border=True):
         from co_scientist import boltz_scorer as _bz
 
-        st.markdown("**Boltz** — *does the drug actually bind the target?*")
+        st.markdown("**Boltz**: *does the drug actually bind the target?*")
         st.caption("Co-folds a protein with a small molecule and reports a "
-                   "binding confidence (0–1). Unlike the others it needs two "
+                   "binding confidence (0-1). Unlike the others it needs two "
                    "specific things a sentence doesn't carry: the protein's "
                    "amino-acid sequence, and the drug as SMILES.")
 
-        # Session-only key. Never written to disk or Streamlit secrets — a paid
+        # Session-only key. Never written to disk or Streamlit secrets. A paid
         # key in shared secrets would bill you for every visitor.
         _bk = st.text_input(
             "Boltz API key", type="password", key="bz_key",
-            help="Kept in this session only — not saved, not shared.",
+            help="Kept in this session only. Not saved, not shared.",
             placeholder="paste your key from api.boltz.bio")
         if _bk:
             _bz.set_api_key(_bk)
 
         if not _bk:
-            st.markdown("No key yet — sign up at [api.boltz.bio]"
+            st.markdown("No key yet. Sign up at [api.boltz.bio]"
                         "(https://api.boltz.bio/console/signup) (launch credits "
                         "available) and paste the key above. It's the only model "
                         "here that costs money.")
@@ -1810,7 +1847,7 @@ with tab3:
             _prot_gene = _bc1.text_input(
                 "Protein (gene symbol)",
                 value=(_genes[0] if _genes else ""), key="bz_gene",
-                help="Benchmate fetches the canonical sequence from UniProt — "
+                help="Benchmate fetches the canonical sequence from UniProt: "
                      "sequences are never made up.")
             # Nobody knows SMILES off-hand, and the Run button being greyed out
             # with no explanation was the whole blocker. So: type a drug name,
@@ -1818,7 +1855,7 @@ with tab3:
             _drug = _bc2.text_input(
                 "Compound name", key="bz_drug",
                 placeholder="e.g. bortezomib",
-                help="Benchmate looks the structure up in PubChem — it never "
+                help="Benchmate looks the structure up in PubChem. It never "
                      "makes a SMILES string up.")
             if _drug and st.session_state.get("_bz_drug_done") != _drug:
                 from co_scientist.pubchem import smiles_for
@@ -1840,7 +1877,7 @@ with tab3:
                 from co_scientist.pubchem import pubchem_url
                 _cid = st.session_state["_bz_cid"]
                 st.caption(f"Structure from PubChem CID "
-                           f"[{_cid}]({pubchem_url(_cid)}) — confirm it's the "
+                           f"[{_cid}]({pubchem_url(_cid)}): confirm it's the "
                            f"compound you meant before spending a run.")
 
             if not (_prot_gene and _lig):
@@ -1857,15 +1894,18 @@ with tab3:
                     _err = f"UniProt lookup failed: {e}"
                 if not _seq:
                     st.error(_err or f"No UniProt sequence found for "
-                                     f"{_prot_gene}. Check the gene symbol — "
+                                     f"{_prot_gene}. Check the gene symbol: "
                                      f"Benchmate won't invent a sequence.")
                 else:
                     st.caption(f"UniProt `{_acc}` · {len(_seq)} residues")
-                    with st.spinner("Boltz is folding the complex — this takes "
+                    with st.spinner("Boltz is folding the complex. This takes "
                                     "a few minutes…"):
                         _sc = _bz.score_binding(_bz.BoltzTarget(
                             protein=_seq, ligand_smiles=_lig,
                             label=f"{_prot_gene}+ligand"))
+                    _live.record("Boltz", _htext[:120],
+                                 _live.elo_for_statement(_htext), _sc,
+                                 _prot_gene)
                     st.session_state["xc_bz"] = {
                         "score": _sc, "gene": _prot_gene, "acc": _acc,
                         "n_res": len(_seq), "smiles": _lig}
@@ -1874,11 +1914,11 @@ with tab3:
             if _r:
                 if _r["score"] is None:
                     st.error("Boltz returned no score. The job may have failed "
-                             "or timed out — the terminal running Streamlit "
+                             "or timed out. The terminal running Streamlit "
                              "shows the API's reason.")
                 else:
                     st.metric("Binding confidence", f"{_r['score']:.3f}")
-                    st.caption("0–1. Above ~0.7 is Boltz's high-confidence "
+                    st.caption("0-1. Above ~0.7 is Boltz's high-confidence "
                                "range; low values mean the model can't place "
                                "this ligand in the pocket, which is evidence "
                                "against a direct-binding hypothesis.")
@@ -1901,15 +1941,40 @@ with tab3:
     # the Elo ranking at all?" Folded away so the tab opens on the thing you
     # actually came to do.
     st.divider()
-    with st.expander("Calibration — does the Elo ranking agree with these "
+    with st.expander("Calibration: does the Elo ranking agree with these "
                      "models across a fixed gold set?"):
         st.caption("This measures the machinery, not your hypothesis. Each "
                    "panel takes a scores file and reports Spearman "
                    "correlation against Elo. Low correlation is a flag.")
+
+        # The scores above and the files below are different data, and that
+        # caught a real user out: score SEL1L live, open this, see SYVN1 and
+        # PSMB5 from a benchmark run. Say so, and offer the live set instead.
+        _lsum = _live.summary()
+        _ready = [r for r in _lsum if r["ready"]]
+        st.info(
+            "**Two different datasets.** By default these panels read the "
+            "**gold-set** files in `benchmark/`, built by benchmark scripts, so "
+            "they will not contain the hypothesis you just scored above. "
+            "Benchmate also records every live score against its hypothesis's "
+            "Elo, which builds a calibration set from your own leaderboard.")
+        if _lsum:
+            st.caption("Recorded from your runs so far: " + " · ".join(
+                f"**{r['model']}** {r['n']}"
+                + ("" if r["ready"] else f"/{_live.MIN_POINTS} needed")
+                for r in _lsum))
+        else:
+            st.caption("Nothing recorded live yet. Score a few different "
+                       "hypotheses above and they will appear here.")
+        _use_live = st.toggle(
+            "Use my live scores instead of the gold set",
+            value=bool(_ready), key="cal_use_live",
+            help=f"Needs at least {_live.MIN_POINTS} different hypotheses "
+                 f"scored by the same model for a correlation to mean anything.")
         # ----- AlphaGenome: regulatory / expression -----
         with st.container(border=True):
             st.markdown(
-                "**AlphaGenome — regulatory effect** *(does a variant change expression?)*. "
+                "**AlphaGenome: regulatory effect** *(does a variant change expression?)*. "
                 "Drop `variant_scores.json` (merged Elo + score) or a raw "
                 "`alphagenome_scores.json` from Colab. See `benchmark/ALPHAGENOME_PLAN.md`."
             )
@@ -1950,7 +2015,7 @@ with tab3:
                             score = [t[2] for t in trip]
                             src = "uploaded AlphaGenome scores + freshly-ranked Elo"
                         else:
-                            st.warning("Raw scores need an Elo column — set your Anthropic "
+                            st.warning("Raw scores need an Elo column. Set your Anthropic "
                                        "key, run build_variant_scores locally, or upload "
                                        "the merged variant_scores.json.")
                 else:
@@ -1966,7 +2031,7 @@ with tab3:
         # ----- Boltz: structure / binding -----
         with st.container(border=True):
             st.markdown(
-                "**Boltz — structure & binding** *(does the drug actually bind the "
+                "**Boltz: structure & binding** *(does the drug actually bind the "
                 "target?)*. The complement to AlphaGenome: it scores binding-style "
                 "hypotheses. Drop a `boltz_scores.json` (merged Elo + score)."
             )
@@ -1980,7 +2045,7 @@ with tab3:
                     "`co_scientist/boltz_scorer.py` (`BoltzTarget` → `score_binding`).\n"
                     "3. Save `benchmark/boltz_scores.json` as "
                     "`[{label, elo, score}, ...]`.\n"
-                    "⚠️ The Boltz API is new — verify the endpoints in boltz_scorer.py "
+                    "⚠️ The Boltz API is new. Verify the endpoints in boltz_scorer.py "
                     "against the console's API reference."
                 )
             upb = st.file_uploader("Drop boltz_scores.json", type=["json"], key="bz_up")
@@ -2001,7 +2066,7 @@ with tab3:
                     if os.path.exists(p):
                         elo, score, labels = _load(p); src = f"`{p}`"
                     else:
-                        st.info("No boltz_scores.json yet — see the setup steps above.")
+                        st.info("No boltz_scores.json yet. See the setup steps above.")
                 if elo is not None:
                     _show_correlation(elo, score, labels, src,
                                       "elo_vs_boltz", "Boltz score")
@@ -2009,8 +2074,18 @@ with tab3:
         # ----- generic gene/variant judges (Open Targets, DepMap, AlphaMissense) -----
         def _simple_panel(title, desc, default_path, save_key, up_key, btn_key,
                           score_col, setup_md=None):
+            # honour the live-scores toggle: point at the file recorded from
+            # this user's own runs rather than the shipped gold set
+            _model_name = title.split(" ")[0] if title else ""
+            if _use_live:
+                _lp = _live.path_for(title.split(" -")[0].strip())
+                if _lp.exists() and len(_live.load(title.split(" -")[0].strip())) >= 2:
+                    default_path = str(_lp.relative_to(REPO_ROOT))
             with st.container(border=True):
-                st.markdown(f"**{title}** — {desc}")
+                st.markdown(f"**{title}**: {desc}")
+                if _use_live and "live_" in default_path:
+                    st.caption(f"Reading **your live scores** "
+                               f"(`{default_path}`), not the gold set.")
                 _show_saved(save_key)
                 if setup_md:
                     with st.expander("How to produce these scores"):
@@ -2032,12 +2107,12 @@ with tab3:
                     elif os.path.exists(default_path):
                         elo, score, labels = _load(default_path); src = f"`{default_path}`"
                     else:
-                        st.info("No scores file yet — see the setup steps above.")
+                        st.info("No scores file yet. See the setup steps above.")
                     if elo is not None:
                         _show_correlation(elo, score, labels, src, save_key, score_col)
 
         _simple_panel(
-            "Open Targets — disease association",
+            "Open Targets: disease association",
             "*is this gene genuinely linked to the disease?* (genetics + literature + drugs). "
             "Free, no key.",
             "benchmark/opentargets_scores.json", "elo_vs_opentargets",
@@ -2046,7 +2121,7 @@ with tab3:
             "Open Targets is a free API). It writes `opentargets_scores.json`.")
 
         _simple_panel(
-            "DepMap — gene dependency",
+            "DepMap: gene dependency",
             "*is this gene actually essential in the disease's cancer cell lines?*",
             "benchmark/depmap_scores.json", "elo_vs_depmap",
             "dm_up", "dm_btn", "dependency",
@@ -2057,21 +2132,21 @@ with tab3:
             "lines instead of pan-cancer.")
 
         _simple_panel(
-            "AlphaMissense — variant pathogenicity",
+            "AlphaMissense: variant pathogenicity",
             "*is a coding variant likely pathogenic?* (free, via Ensembl VEP). "
-            "Scores missense variants — supply real ones.",
+            "Scores missense variants. Supply real ones.",
             "benchmark/alphamissense_scores.json", "elo_vs_alphamissense",
             "am_up", "am_btn", "pathogenicity",
             "1. `python -m benchmark.fetch_clinvar` pulls **real** pathogenic + benign "
             "missense variants (GRCh38 coords) from ClinVar. 2. "
             "`python -m benchmark.build_missense_scores` ranks them by Elo, scores each "
             "with AlphaMissense (free Ensembl VEP), and writes "
-            "`alphamissense_scores.json` — plus a pathogenic-vs-benign calibration check.")
+            "`alphamissense_scores.json`: plus a pathogenic-vs-benign calibration check.")
 
     st.divider()
     with st.expander("Is the ranking itself reliable? (benchmark the tournament)"):
         st.caption("The panel above checks the *hypotheses*. This checks the "
-                   "*machinery* — does the Elo tournament and the LLM judge produce "
+                   "*machinery*: does the Elo tournament and the LLM judge produce "
                    "a ranking you can trust in the first place?")
         _benchmark_section()
 
@@ -2083,7 +2158,7 @@ def _bench_assay_panel():
     st.write(
         "Upload a run from the alamarBlue rig (columns `t_s, R, G, B, red_blue`). "
         "Benchmate turns the colour kinetics into a viability readout and files it "
-        "as evidence — so the next run reasons over the bench result, not just the "
+        "as evidence: so the next run reasons over the bench result, not just the "
         "literature. This is the *test → learn* edge of the loop."
     )
 
@@ -2119,7 +2194,7 @@ def _bench_assay_panel():
         c2.metric("plateau", m["plateau"])
         c3.metric("Δ reduction", m["delta"])
         pct = rec["viability"].get("viability_pct_of_control")
-        c4.metric("viability", f"{pct:.0f}%" if pct is not None else "—")
+        c4.metric("viability", f"{pct:.0f}%" if pct is not None else "-")
 
         rows = assay.read_run(tmp)
         df = pd.DataFrame(rows).set_index("t_s")[["red_blue"]]
@@ -2131,7 +2206,7 @@ def _bench_assay_panel():
          st.warning if direction == "down-weight" else st.info)(
             f"**{verdict}.** {rec['interpretation']} "
             f"Suggested action: **{direction}**.")
-        st.caption(f"Saved to `data/rig/{a_hyp.strip()}_assay.json` — "
+        st.caption(f"Saved to `data/rig/{a_hyp.strip()}_assay.json`: "
                    "the next Benchmate run will factor this in.")
         with st.expander("Evidence block the agents will read"):
             st.code(assay.summarize(rec))
@@ -2145,20 +2220,20 @@ def _bench_assay_panel():
             if not rec:
                 continue
             st.markdown(
-                f"- **{label}** — {rec['drug']} on {rec['cell_line']}: "
+                f"- **{label}**: {rec['drug']} on {rec['cell_line']}: "
                 f"{rec['viability']['verdict']} "
                 f"(*{rec['direction_for_benchmate']}*)"
             )
     else:
-        st.caption("No bench results on record yet — ingest a run above.")
+        st.caption("No bench results on record yet. Ingest a run above.")
 
-# ── Tab 5 — About (kept last) ────────────────────────────────
+# ── Tab 5. About (kept last) ────────────────────────────────
 with tab5:
     step_intro("what Benchmate is, how the loop works, and where to read more.")
     st.header("About Benchmate")
     st.markdown(
         "Benchmate is a small, open AI co-scientist for biomedical hypothesis "
-        "generation — an independent re-implementation of Google DeepMind's "
+        "generation: an independent re-implementation of Google DeepMind's "
         "AI Co-Scientist. Seven agents propose hypotheses, critique each other, "
         "and run an Elo tournament; the winners are then cross-checked against a "
         "panel of independent models and, increasingly, real bench results."
@@ -2175,19 +2250,19 @@ with tab5:
         "1. [Building Benchmate, Part 1](https://benchpressed.substack.com/p/building-benchmate-part-1)\n"
         "2. [Building Benchmate, Part 2](https://benchpressed.substack.com/p/building-benchmate-part-2)\n"
         "3. [Can you trust an AI scientist's #1 idea?](https://benchpressed.substack.com/p/can-you-trust-an-ai-scientists-1)\n"
-        "4. [Part 3 — What is the AI actually judging?](https://benchpressed.substack.com/p/building-benchmate-part-3-what-is)\n"
-        "5. [Part 4 — A panel of judges](https://benchpressed.substack.com/p/building-benchmate-part-4-a-panel)\n"
-        "6. [Part 5 — Filling out the panel](https://benchpressed.substack.com/p/building-benchmate-part-5-filling)"
+        "4. [Part 3. What is the AI actually judging?](https://benchpressed.substack.com/p/building-benchmate-part-3-what-is)\n"
+        "5. [Part 4. A panel of judges](https://benchpressed.substack.com/p/building-benchmate-part-4-a-panel)\n"
+        "6. [Part 5. Filling out the panel](https://benchpressed.substack.com/p/building-benchmate-part-5-filling)"
     )
     st.caption("New posts land at benchpressed.substack.com.")
 
     st.divider()
     benchmate_anchor("about", "*what can you do?* · *how does the loop work?* · *where should I start?*")
 
-# ── Tab 4 — Experiment (design → execute → results → inventory) ─
+# ── Tab 4. Experiment (design → execute → results → inventory) ─
 with tab4:
-    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "loops back to step 3 &mdash; the bench result re-ranks the ideas")
-    st.header("Experiment — design, run, and learn")
+    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "loops back to step 3: the bench result re-ranks the ideas")
+    st.header("Experiment: design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
                "the reagents → run it → feed the result back to sharpen the idea.")
 
@@ -2262,9 +2337,9 @@ with tab4:
                 reg = d["reagents_needed"]
                 reg = reg if isinstance(reg, list) else [str(reg)]
                 st.success("Reagents to pull: " + ", ".join(str(r) for r in reg))
-            st.caption("Next: Execute — locate these in your freezer.")
+            st.caption("Next: Execute: locate these in your freezer.")
 
-    # ---------- 2. Execute — find the reagents ----------
+    # ---------- 2. Execute. Find the reagents ----------
     with e_tab:
         st.markdown("Check the reagents your design needs against what's in your "
                     "freezer. (Manage your boxes and lists in the **Reagent "
@@ -2282,7 +2357,7 @@ with tab4:
         # Streamlit trap: a text_input with BOTH `key` and `value` only honours
         # `value` the first time. After that session_state wins, so the box kept
         # showing the demo reagents forever and the design never came through.
-        # Write to session_state instead, and only when the design changes — so
+        # Write to session_state instead, and only when the design changes: so
         # a hand-edited list isn't clobbered on every rerun.
         _sig = "|".join(_rn)
         if _rn and st.session_state.get("_exec_design_sig") != _sig:
@@ -2294,7 +2369,7 @@ with tab4:
             st.caption("From your current design: "
                        + (", ".join(_rn) if _rn else "no reagents listed"))
         else:
-            st.info("No design yet — showing demo reagents. Run **1 · Design** "
+            st.info("No design yet. Showing demo reagents. Run **1 · Design** "
                     "first and this fills itself in.")
 
         cn, cb = st.columns([4, 1])
@@ -2310,30 +2385,30 @@ with tab4:
                 st.session_state["exec_needed"] = ", ".join(_rn)
                 st.rerun()
         needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
-        st.caption("alamarBlue, media, and plates are assumed on hand — this checks "
+        st.caption("alamarBlue, media, and plates are assumed on hand. This checks "
                    "the experimental compounds.")
         if hasattr(freezer, "reconcile"):
             rec = freezer.reconcile(needed, box)
         else:
             # A stale deploy may hold an older freezer module without reconcile();
             # fall back to locate() so the tab still works. Reboot to refresh.
-            st.caption("Running a compatibility fallback — reboot the app to refresh.")
+            st.caption("Running a compatibility fallback. Reboot the app to refresh.")
             rec = [{"reagent": r, "found": bool(h),
                     "position": h[0]["position"] if h else None,
                     "label": h[0]["label"] if h else None}
                    for r in needed for h in [freezer.locate(r, box)]]
         for row in rec:
             if row["found"]:
-                st.markdown(f"- **{row['reagent']}** — in the box at "
+                st.markdown(f"- **{row['reagent']}**: in the box at "
                             f"**{row['position']}** ({row['label']})")
             else:
-                st.markdown(f"- **{row['reagent']}** — not in this box; order it or "
+                st.markdown(f"- **{row['reagent']}**: not in this box; order it or "
                             "point Benchmate at the right box")
         missing = [r["reagent"] for r in rec if not r["found"]]
         if missing:
             st.warning("Need to source: " + ", ".join(missing))
         elif needed:
-            st.success("Everything's on hand — you're ready to run.")
+            st.success("Everything's on hand. You're ready to run.")
 
     # ---------- 3. Results & feedback ----------
     with r_tab:
@@ -2342,7 +2417,7 @@ with tab4:
         _bench_assay_panel()
 
         st.divider()
-        st.subheader("Feed it back — sharpen the hypothesis")
+        st.subheader("Feed it back. Sharpen the hypothesis")
         on_record = assay.available_assays()
         default_summary = ""
         if on_record:
@@ -2378,7 +2453,7 @@ with tab4:
     # ---------- Reagent inventory ----------
     with inv_tab:
         st.markdown(
-            "Your on-hand reagents — this is what **Execute** checks against. "
+            "Your on-hand reagents. This is what **Execute** checks against. "
             "Upload a **CryoVision box map** (scan a photo locally: "
             "`python cryovision.py --image box.jpg --output box.csv`) or a plain "
             "**reagent list** (CSV or Excel with a name column, and optionally a "
@@ -2414,7 +2489,7 @@ with tab4:
                         except Exception as ex:
                             st.error(f"Scan failed: {ex}")
 
-        fu = st.file_uploader("Inventory — box map or reagent list (CSV, JSON, or Excel)",
+        fu = st.file_uploader("Inventory. Box map or reagent list (CSV, JSON, or Excel)",
                               type=["csv", "json", "xlsx", "xls"], key="inv_up")
         if fu is not None:
             import tempfile
@@ -2433,14 +2508,14 @@ with tab4:
 
         inv = st.session_state.get("loop_box") or freezer.load_box(freezer.DEFAULT_BOX)
         st.caption(f"Active inventory: {st.session_state.get('loop_box_name', 'demo_drug_box.csv')} "
-                   f"— {sum(1 for c in inv if c['label'])} reagents on hand.")
+                   f"{sum(1 for c in inv if c['label'])} reagents on hand.")
 
         q = st.text_input("Search the inventory", key="inv_q")
         shown = [c for c in inv if c["label"] and
                  (not q or freezer._norm(q) in freezer._norm(c["label"]))]
         import pandas as pd
         if shown:
-            df = pd.DataFrame([{"reagent": c["label"], "location": c["position"] or "—"}
+            df = pd.DataFrame([{"reagent": c["label"], "location": c["position"] or "-"}
                                for c in shown])
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:

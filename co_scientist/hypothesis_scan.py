@@ -24,13 +24,13 @@ import re
 from functools import lru_cache
 
 # Uppercase-ish tokens that look like they could be gene symbols.
-# Deliberately permissive — validation is what decides.
+# Deliberately permissive. Validation is what decides.
 _CANDIDATE = re.compile(r"\b[A-Z][A-Z0-9]{1,9}(?:-[A-Z0-9]{1,4})?\b")
 
 # Things that match the shape of a gene symbol but aren't one. Checking these
 # locally saves a network round-trip and, more importantly, protects against a
 # validator that returns a spurious hit (several of these DO resolve to
-# something in gene databases — "ERAD" and "UPR" have entries as pathway
+# something in gene databases. "ERAD" and "UPR" have entries as pathway
 # aliases in places).
 _STOPLIST = {
     # pathways / processes / concepts
@@ -68,7 +68,7 @@ _GENOMIC = re.compile(
 def is_gene(symbol: str) -> bool | None:
     """Is `symbol` a real human gene symbol?
 
-    Returns True / False / **None**, where None means "couldn't check" — the
+    Returns True / False / **None**, where None means "couldn't check": the
     validator was unreachable. That third state matters: failing closed would
     turn an offline moment into the message "no gene symbol found", which reads
     as a bad hypothesis rather than a network problem. Callers should fall back
@@ -77,7 +77,7 @@ def is_gene(symbol: str) -> bool | None:
     Tries mygene (NCBI/Ensembl-backed) first, then Open Targets, which the
     cross-check panel already depends on and needs no API key.
 
-    Cached — the same handful of symbols gets re-checked on every rerun.
+    Cached: the same handful of symbols gets re-checked on every rerun.
     """
     sym = symbol.strip().upper()
     if not sym:
@@ -89,7 +89,7 @@ def is_gene(symbol: str) -> bool | None:
         import mygene
         hits = mygene.MyGeneInfo().query(
             sym, fields="symbol", species="human", size=5).get("hits", [])
-        # require an EXACT match — mygene fuzzily returns neighbours
+        # require an EXACT match. Mygene fuzzily returns neighbours
         return any(str(h.get("symbol", "")).upper() == sym for h in hits)
     except Exception:
         pass
@@ -118,7 +118,7 @@ def genes_in(text: str, validate: bool = True) -> tuple[list[str], bool]:
         if validate:
             ok = is_gene(sym)
             if ok is None:
-                could_validate = False   # unreachable — keep it, flag the run
+                could_validate = False   # unreachable. Keep it, flag the run
             elif not ok:
                 continue
         seen.append(sym)
@@ -151,7 +151,7 @@ def scan(text: str, validate: bool = True) -> dict:
     """Everything scoreable in a hypothesis.
 
     Returns {genes, variants, scoreable_variants, notes} where `notes` explains
-    in plain language why a model may not apply — that explanation is the whole
+    in plain language why a model may not apply. That explanation is the whole
     point, since "no score" is otherwise indistinguishable from "broken".
     """
     genes, validated = genes_in(text, validate=validate)
@@ -160,20 +160,20 @@ def scan(text: str, validate: bool = True) -> dict:
     notes: list[str] = []
     if validate and not validated:
         notes.append("Couldn't reach a gene-symbol validator (mygene / Open "
-                     "Targets), so these symbols were matched by pattern only "
-                     "— one of them may not be a real gene.")
+                     "Targets), so these symbols were matched by pattern only, "
+                     "and one of them may not be a real gene.")
     if not genes:
         notes.append("No gene symbol found, so Open Targets and DepMap have "
                      "nothing to look up. Name the gene explicitly (e.g. SEL1L "
                      "rather than 'the ERAD receptor').")
     if not variants:
         notes.append("No variant named, so AlphaMissense and AlphaGenome don't "
-                     "apply — both score a specific change at a specific "
+                     "apply: both score a specific change at a specific "
                      "position.")
     elif not scoreable:
         kinds = ", ".join(sorted({v["kind"] for v in variants}))
         notes.append(f"Found a variant reference ({kinds}) but no genomic "
-                     f"coordinates. AlphaMissense needs chrom/pos/ref/alt — "
+                     f"coordinates. AlphaMissense needs chrom/pos/ref/alt: "
                      f"look it up in ClinVar or dbSNP rather than guessing.")
     return {"genes": genes, "validated": validated, "variants": variants,
             "scoreable_variants": scoreable, "notes": notes}
