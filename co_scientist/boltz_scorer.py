@@ -40,14 +40,38 @@ class BoltzTarget:
     label: str = ""         # tag so a score maps back to a hypothesis
 
 
-def boltz_available() -> bool:
-    if not BOLTZ_API_KEY:
-        return False
+def set_api_key(key: str) -> None:
+    """Set the key at runtime, for a UI that collects it from the user.
+
+    BOLTZ_API_KEY is read at import time, so setting os.environ afterwards has
+    no effect on this module — which made a key pasted into Streamlit look like
+    it did nothing. Updating both keeps the two in step.
+
+    Deliberately session-only: the key stays in this process and is never
+    written to disk or to a secrets file, so one person's paid key can't end up
+    billing everyone who opens the app.
+    """
+    global BOLTZ_API_KEY
+    BOLTZ_API_KEY = (key or "").strip()
+    if BOLTZ_API_KEY:
+        os.environ["BOLTZ_API_KEY"] = BOLTZ_API_KEY
+    else:
+        os.environ.pop("BOLTZ_API_KEY", None)
+
+
+def sdk_installed() -> bool:
+    """Whether the Boltz SDK is importable, regardless of key."""
     try:
         import boltz_api  # noqa: F401
         return True
     except Exception:
         return False
+
+
+def boltz_available() -> bool:
+    if not BOLTZ_API_KEY:
+        return False
+    return sdk_installed()
 
 
 def _get(obj, *names):

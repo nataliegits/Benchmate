@@ -1512,6 +1512,28 @@ with tab3:
             shown += f" +{len(_genes) - 3} more"
         return template.replace("{g}", shown)
 
+    def _show_work(exps, label):
+        """Render the real steps a model took, not a description of them."""
+        if not exps:
+            return
+        with st.expander(f"What Benchmate did to get {label}"):
+            for e in exps:
+                if e.get("gene"):
+                    st.markdown(f"**{e['gene']}**")
+                for _s in e.get("steps", []):
+                    st.markdown(f"{_s}")
+                if e.get("variants"):
+                    import pandas as pd
+                    st.dataframe(pd.DataFrame([
+                        {"Variant": v["variant"], "ClinVar": v["clinvar"],
+                         "AlphaMissense": v["alphamissense"]}
+                        for v in e["variants"]]),
+                        use_container_width=True, hide_index=True)
+                st.divider()
+            _d = exps[0].get("detail")
+            if _d:
+                st.caption(_d)
+
     def _score_table(rows):
         import pandas as pd
         st.dataframe(
@@ -1534,15 +1556,19 @@ with tab3:
                                 disabled=not _genes, use_container_width=True)
         if _run_ot:
             with st.spinner("Asking Open Targets…"):
-                _rows, _probs = [], []
+                _rows, _probs, _exps = [], [], []
                 for _g in _genes:
-                    _v = target_scorer.opentargets_score(_g, _dis)
+                    _e = _xc.explain_opentargets(_g, _dis)
+                    _e["gene"] = _g
+                    _exps.append(_e)
+                    _v = _e["score"]
                     if _v is None:
                         _probs.append(f"{_g}: didn't resolve, or the API errored.")
                     else:
                         _rows.append({"target": _g, "score": round(_v, 3),
                                       "reading": _xc.read_opentargets(_v)})
-                st.session_state["xc_ot"] = {"rows": _rows, "problems": _probs}
+                st.session_state["xc_ot"] = {"rows": _rows, "problems": _probs,
+                                             "exps": _exps}
         _r = st.session_state.get("xc_ot")
         if _r:
             if _r["rows"]:
@@ -1550,6 +1576,7 @@ with tab3:
                 st.caption("0–1, higher = stronger evidence the gene is involved "
                            "in this disease. 0.0 means resolved cleanly with "
                            "nothing on record.")
+            _show_work(_r.get("exps"), "this score")
             for _p in _r["problems"]:
                 st.caption(f"⚠ {_p}")
         elif not _genes:
@@ -1572,21 +1599,26 @@ with tab3:
                    f"restricted to {_dm_lin} cell lines"))
             if st.button("Run DepMap", key="xc_dm_btn", disabled=not _genes):
                 with st.spinner("Reading the CRISPR matrix…"):
-                    _rows, _probs = [], []
+                    _rows, _probs, _exps = [], [], []
                     for _g in _genes:
-                        _v = target_scorer.depmap_score(_g)
+                        _e = _xc.explain_depmap(_g)
+                        _e["gene"] = _g
+                        _exps.append(_e)
+                        _v = _e["score"]
                         if _v is None:
-                            _probs.append(f"{_g}: not in the CRISPR matrix.")
+                            _probs.append(f"{_g}: not in the CRISPR data.")
                         else:
                             _rows.append({"target": _g, "score": round(_v, 3),
                                           "reading": _xc.read_depmap(_v)})
-                    st.session_state["xc_dm"] = {"rows": _rows, "problems": _probs}
+                    st.session_state["xc_dm"] = {"rows": _rows,
+                                                 "problems": _probs, "exps": _exps}
             _r = st.session_state.get("xc_dm")
             if _r:
                 if _r["rows"]:
                     _score_table(_r["rows"])
                     st.caption("Higher = more essential. Above ~1.0 the cells "
                                "die without it; near 0 it's dispensable.")
+                _show_work(_r.get("exps"), "this score")
                 for _p in _r["problems"]:
                     st.caption(f"⚠ {_p}")
             elif not _genes:
@@ -1621,7 +1653,7 @@ with tab3:
         if st.button("Run AlphaMissense", key="xc_am_btn",
                      disabled=not (_genes or _sv)):
             with st.spinner("Fetching ClinVar variants and scoring…"):
-                _rows, _probs = [], []
+                _rows, _probs, _exps = [], [], []
                 if _sv:
                     for _v in _sv:
                         _s = target_scorer.alphamissense_score(
@@ -1634,7 +1666,10 @@ with tab3:
                                           "reading": _xc.read_alphamissense(_s)})
                 else:
                     for _g in _genes:
-                        _m, _n, _why = _xc.gene_missense_burden(_g)
+                        _e = _xc.explain_missense(_g)
+                        _e["gene"] = _g
+                        _exps.append(_e)
+                        _m, _n, _why = _e["score"], _e["n"], _e["why"]
                         if _m is None:
                             _probs.append(_why)
                         else:
@@ -1643,7 +1678,8 @@ with tab3:
                                 "score": round(_m, 3),
                                 "reading": (f"{_xc.read_alphamissense(_m)} — mean "
                                             f"over {_n} ClinVar variants")})
-                st.session_state["xc_am"] = {"rows": _rows, "problems": _probs}
+                st.session_state["xc_am"] = {"rows": _rows, "problems": _probs,
+                                             "exps": _exps}
         _r = st.session_state.get("xc_am")
         if _r:
             if _r["rows"]:
@@ -1651,6 +1687,7 @@ with tab3:
                 st.caption("0–1. Above 0.564 is AlphaMissense's "
                            "likely-pathogenic threshold; below 0.34 is likely "
                            "benign.")
+            _show_work(_r.get("exps"), "this score")
             for _p in _r["problems"]:
                 st.caption(f"⚠ {_p}")
         elif not (_genes or _sv):
@@ -1685,20 +1722,26 @@ with tab3:
                                 value=", ".join(_ag_genes), key="ag_nb_genes")
         _ag_list = [g.strip().upper() for g in _ag_txt.split(",") if g.strip()]
 
-        _c1, _c2 = st.columns([1, 1])
-        with _c1:
-            _write_nb = st.button("Write the Colab notebook", key="ag_nb_btn",
-                                  use_container_width=True)
-        with _c2:
-            st.link_button("Open Colab", "https://colab.research.google.com",
-                           use_container_width=True)
-        if _write_nb:
+        if st.button("Write the Colab notebook", key="ag_nb_btn",
+                     type="primary"):
+            st.session_state.pop("ag_colab_url", None)
             try:
                 from ui.alphagenome_nb import generate_alphagenome_notebook
                 with st.spinner("Looking up real eQTLs in GTEx…"):
                     _p, _n = generate_alphagenome_notebook(genes=_ag_list)
                 st.session_state["ag_nb_path"] = str(_p)
                 st.session_state["ag_nb_n"] = _n
+                # Straight into Colab rather than download-then-upload: push the
+                # notebook to a gist and hand back the Colab URL. Same handoff
+                # the Geneformer tab uses.
+                if gh_available():
+                    with st.spinner("Opening it in Colab…"):
+                        _h = handoff(_p, description=(
+                            f"Benchmate AlphaGenome scoring — "
+                            f"{', '.join(_ag_list) or 'ERAD benchmark set'}"))
+                    st.session_state["ag_colab_url"] = _h["colab_url"]
+            except GhUnavailable:
+                pass          # no gist creds — the download fallback still works
             except Exception as ex:
                 st.session_state.pop("ag_nb_path", None)
                 st.error(str(ex))
@@ -1707,12 +1750,24 @@ with tab3:
             _pth = Path(_agp)
             st.success(f"`{_pth.name}` — {st.session_state.get('ag_nb_n', '?')} "
                        f"variants, each a real GTEx eQTL.")
-            st.download_button("Download the notebook", _pth.read_bytes(),
-                               file_name=_pth.name, key="ag_nb_dl",
+            _cu = st.session_state.get("ag_colab_url")
+            if _cu:
+                st.link_button("▶ Open in Colab", _cu, type="primary",
                                use_container_width=True)
-            st.caption("Upload to Colab → run top to bottom → it downloads "
-                       "`alphagenome_scores.json`. Bring that back to the "
-                       "AlphaGenome panel under **Calibration** below.")
+                st.caption("Opens ready to run — no download, no upload. Run top "
+                           "to bottom and it produces "
+                           "`alphagenome_scores.json`.")
+            else:
+                st.download_button("Download the notebook", _pth.read_bytes(),
+                                   file_name=_pth.name, key="ag_nb_dl",
+                                   use_container_width=True)
+                st.caption(
+                    "One-click Colab needs gist access. Set a `GITHUB_TOKEN` "
+                    "(Streamlit Cloud: *Manage app → Settings → Secrets*) with "
+                    "the `gist` scope, and this button becomes **Open in "
+                    "Colab**. Until then: download, then upload to Colab.")
+            st.caption("Bring the scores back to the AlphaGenome panel under "
+                       "**Calibration** below.")
         if not _ag_list:
             st.caption("With no genes it falls back to the built-in ERAD "
                        "benchmark set — right for calibration, but it won't "
@@ -1720,19 +1775,98 @@ with tab3:
 
     # ---------------- Boltz ----------------
     with st.container(border=True):
+        from co_scientist import boltz_scorer as _bz
+
         st.markdown("**Boltz** — *does the drug actually bind the target?*")
-        if os.environ.get("BOLTZ_API_KEY"):
-            st.caption("API key found. Boltz needs a protein sequence plus a "
-                       "ligand, which a hypothesis sentence doesn't carry — set "
-                       "them up in `benchmark/gold_set_binding.py`, then use the "
-                       "Boltz panel under **Calibration** below.")
-        else:
-            st.caption("Needs a paid API key — the only model here that costs "
-                       "money.")
-            st.markdown("Sign up at [api.boltz.bio]"
+        st.caption("Co-folds a protein with a small molecule and reports a "
+                   "binding confidence (0–1). Unlike the others it needs two "
+                   "specific things a sentence doesn't carry: the protein's "
+                   "amino-acid sequence, and the drug as SMILES.")
+
+        # Session-only key. Never written to disk or Streamlit secrets — a paid
+        # key in shared secrets would bill you for every visitor.
+        _bk = st.text_input(
+            "Boltz API key", type="password", key="bz_key",
+            help="Kept in this session only — not saved, not shared.",
+            placeholder="paste your key from api.boltz.bio")
+        if _bk:
+            _bz.set_api_key(_bk)
+
+        if not _bk:
+            st.markdown("No key yet — sign up at [api.boltz.bio]"
                         "(https://api.boltz.bio/console/signup) (launch credits "
-                        "available), create a key, then `export BOLTZ_API_KEY=…` "
-                        "before starting Streamlit.")
+                        "available) and paste the key above. It's the only model "
+                        "here that costs money.")
+        elif not _bz.sdk_installed():
+            st.warning("Key accepted, but the `boltz-api` SDK isn't installed "
+                       "in this environment. Add `boltz-api` to "
+                       "`requirements.txt` and reboot the app.")
+        else:
+            st.success("Key set for this session.")
+            _bc1, _bc2 = st.columns(2)
+            _prot_gene = _bc1.text_input(
+                "Protein (gene symbol)",
+                value=(_genes[0] if _genes else ""), key="bz_gene",
+                help="Benchmate fetches the canonical sequence from UniProt — "
+                     "sequences are never made up.")
+            _lig = _bc2.text_input(
+                "Ligand as SMILES", key="bz_smiles",
+                placeholder="e.g. CC(C)C[C@H](NC(=O)...)B(O)O",
+                help="Get SMILES from PubChem or DrugBank. A wrong SMILES "
+                     "silently scores a different molecule.")
+            st.caption("Need SMILES? Search the compound on "
+                       "[PubChem](https://pubchem.ncbi.nlm.nih.gov) and copy "
+                       "its Canonical SMILES.")
+
+            if st.button("Run Boltz", key="bz_run",
+                         disabled=not (_prot_gene and _lig), type="primary"):
+                _seq, _acc, _err = None, None, None
+                try:
+                    from benchmark.fetch_uniprot import uniprot_sequence
+                    with st.spinner(f"Fetching {_prot_gene} sequence from UniProt…"):
+                        _seq, _acc = uniprot_sequence(_prot_gene)
+                except Exception as e:
+                    _err = f"UniProt lookup failed: {e}"
+                if not _seq:
+                    st.error(_err or f"No UniProt sequence found for "
+                                     f"{_prot_gene}. Check the gene symbol — "
+                                     f"Benchmate won't invent a sequence.")
+                else:
+                    st.caption(f"UniProt `{_acc}` · {len(_seq)} residues")
+                    with st.spinner("Boltz is folding the complex — this takes "
+                                    "a few minutes…"):
+                        _sc = _bz.score_binding(_bz.BoltzTarget(
+                            protein=_seq, ligand_smiles=_lig,
+                            label=f"{_prot_gene}+ligand"))
+                    st.session_state["xc_bz"] = {
+                        "score": _sc, "gene": _prot_gene, "acc": _acc,
+                        "n_res": len(_seq), "smiles": _lig}
+
+            _r = st.session_state.get("xc_bz")
+            if _r:
+                if _r["score"] is None:
+                    st.error("Boltz returned no score. The job may have failed "
+                             "or timed out — the terminal running Streamlit "
+                             "shows the API's reason.")
+                else:
+                    st.metric("Binding confidence", f"{_r['score']:.3f}")
+                    st.caption("0–1. Above ~0.7 is Boltz's high-confidence "
+                               "range; low values mean the model can't place "
+                               "this ligand in the pocket, which is evidence "
+                               "against a direct-binding hypothesis.")
+                with st.expander("What Benchmate did to get this score"):
+                    st.markdown(
+                        f"- Fetched the canonical sequence for **{_r['gene']}** "
+                        f"from **UniProt** (`{_r['acc']}`, {_r['n_res']} residues)\n"
+                        f"- Submitted protein chain A + ligand chain B to the "
+                        f"Boltz API as a `ligand_protein_binding` job "
+                        f"(model `{_bz.BOLTZ_MODEL}`)\n"
+                        f"- Polled until the job finished, then read "
+                        f"`binding_metrics.binding_confidence`")
+                    st.caption("Boltz is an AlphaFold3-class co-folding model: "
+                               "it predicts the 3D structure of the complex and "
+                               "how confident it is that the ligand binds. This "
+                               "is a prediction, not a measurement.")
 
     # The five uploader panels below answer a DIFFERENT question from the
     # scoring panel above: not "is this hypothesis any good?" but "can I trust

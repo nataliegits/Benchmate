@@ -39,6 +39,30 @@ def _fetch_fasta(client: httpx.Client, gene: str) -> tuple[str, str] | None:
     return (header, seq) if seq else None
 
 
+def uniprot_sequence(gene: str, timeout: float = 30.0) -> tuple[str | None, str | None]:
+    """Canonical reviewed human protein sequence for `gene`, as (sequence, accession).
+
+    Public wrapper so the UI can fetch a sequence on demand instead of only at
+    gold-set build time. Returns (None, None) when UniProt has no reviewed
+    entry — the caller must not substitute a guess, because a wrong sequence
+    would silently fold the wrong protein.
+
+    The accession is parsed out of the FASTA header (`>sp|P55072|TERA_HUMAN …`)
+    so a score can be traced back to the exact entry used.
+    """
+    with httpx.Client(timeout=timeout) as client:
+        try:
+            got = _fetch_fasta(client, gene.strip().upper())
+        except Exception:
+            return None, None
+    if not got:
+        return None, None
+    header, seq = got
+    parts = header.split("|")
+    acc = parts[1] if len(parts) > 2 else header.lstrip(">").split()[0]
+    return seq, acc
+
+
 def main():
     # gene symbol per label (multiple labels can share a target)
     by_label = {g["label"]: g.get("uniprot_gene") for g in GOLD_BINDING}

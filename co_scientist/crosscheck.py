@@ -156,6 +156,143 @@ def gene_missense_burden(gene: str, max_variants: int = 5
 _gene_missense_burden = gene_missense_burden
 
 
+# ---------------------------------------------------------------------------
+# Show your work
+# ---------------------------------------------------------------------------
+# A score with no visible provenance is a black box, and a black box is exactly
+# what a cross-check is supposed to protect you from. Each explain_* below
+# returns the real steps taken — resolved identifiers, endpoints hit, how many
+# rows were averaged — so a number can be audited rather than trusted.
+
+def explain_opentargets(symbol: str, disease: str) -> dict:
+    """Score `symbol` against `disease`, returning the score AND the lookup."""
+    steps: list[str] = []
+    ens = did = None
+    try:
+        ens = target_scorer._resolve(symbol, "target")
+        steps.append(f"Resolved gene **{symbol}** → `{ens or 'not found'}` "
+                     f"(Open Targets search API)")
+        did = target_scorer._resolve(disease, "disease")
+        steps.append(f"Resolved disease **{disease}** → `{did or 'not found'}` "
+                     f"(EFO / MONDO ontology id)")
+    except Exception as e:
+        steps.append(f"Identifier lookup failed: {e}")
+
+    score = target_scorer.opentargets_score(symbol, disease)
+    steps.append("Asked the GraphQL API for the overall association score "
+                 "between those two ids")
+    if score is not None:
+        steps.append(f"Returned **{score:.3f}** — {read_opentargets(score)}")
+    return {"score": score, "steps": steps,
+            "endpoint": getattr(target_scorer, "OT_URL", "Open Targets GraphQL"),
+            "detail": ("The score aggregates every evidence type Open Targets "
+                       "holds for this gene–disease pair: GWAS and rare-disease "
+                       "genetics, differential expression, animal models, known "
+                       "drugs, pathway membership and text-mined literature. It "
+                       "is a weighted harmonic sum, so one strong line of "
+                       "evidence lifts it more than several weak ones."),
+            "ids": {"target": ens, "disease": did}}
+
+
+def explain_depmap(symbol: str) -> dict:
+    """Dependency score for `symbol`, plus which data it came from."""
+    steps: list[str] = []
+    src = target_scorer.depmap_source()
+    lineage = target_scorer.depmap_lineage_in_use()
+    n_lines = None
+    raw = None
+
+    if src == "full":
+        steps.append(f"Read the full CRISPR knockout matrix "
+                     f"(`{target_scorer.DEPMAP_CSV.name}`)")
+        try:
+            df = target_scorer._depmap_frame()
+            col = next((c for c in df.columns
+                        if str(c).split(" ")[0].upper() == symbol.upper()), None)
+            if col:
+                series = df[col]
+                ids = target_scorer._myeloma_model_ids()
+                if ids:
+                    sub = series[series.index.isin(ids)]
+                    if len(sub) >= 3:
+                        series = sub
+                n_lines = int(series.notna().sum())
+                raw = float(series.mean())
+                steps.append(f"Found column `{col}`")
+        except Exception as e:
+            steps.append(f"Matrix read failed: {e}")
+    elif src == "summary":
+        steps.append("Read the precomputed per-gene summary that ships with "
+                     "Benchmate (`gene_effect_summary.csv`) — same DepMap "
+                     "numbers, condensed so no 440 MB download is needed")
+        try:
+            row = target_scorer._depmap_summary_frame().loc[symbol.upper()]
+            raw = float(row["mean_effect"])
+            n_lines = int(row["n_lines"])
+        except Exception:
+            steps.append(f"{symbol} is not in the summary")
+
+    if n_lines is not None:
+        steps.append(f"Averaged the gene-effect score across **{n_lines} "
+                     f"{'' if lineage == 'all' else lineage + ' '}cell lines**")
+    if raw is not None:
+        steps.append(f"Mean gene effect = **{raw:+.3f}** (negative = cells lose "
+                     f"fitness without it); reported as **{-raw:.3f}** so higher "
+                     f"means more essential")
+
+    score = target_scorer.depmap_score(symbol)
+    return {"score": score, "steps": steps, "source": src, "lineage": lineage,
+            "n_lines": n_lines, "raw_effect": raw,
+            "detail": ("DepMap knocked out this gene with CRISPR in hundreds of "
+                       "cancer cell lines and measured how much each line's "
+                       "growth suffered (the Chronos gene-effect score). Around "
+                       "0 means the cells didn't care; −1 is roughly the median "
+                       "of known essential genes. This is measured data, not a "
+                       "prediction.")}
+
+
+def explain_missense(gene: str, max_variants: int = 5) -> dict:
+    """Gene-level pathogenicity, showing every variant used to get there."""
+    steps: list[str] = []
+    variants: list[dict] = []
+    try:
+        from benchmark.fetch_clinvar import fetch
+        recs = fetch([gene], per_class=max_variants)
+        steps.append(f"Queried **ClinVar** (NCBI E-utilities) for missense "
+                     f"variants in **{gene}**")
+        path = [r for r in recs
+                if str(r.get("clinsig", "")).lower().startswith("patho")]
+        steps.append(f"Kept **{len(path)}** classified pathogenic "
+                     f"(of {len(recs)} returned)")
+        for r in path[:max_variants]:
+            s = target_scorer.alphamissense_score(
+                r.get("chrom"), r.get("pos"), r.get("ref"), r.get("alt"))
+            variants.append({
+                "variant": f"chr{r.get('chrom')}:{r.get('pos')} "
+                           f"{r.get('ref')}>{r.get('alt')}",
+                "clinvar": r.get("clinsig"), "alphamissense": s})
+        scored = [v["alphamissense"] for v in variants
+                  if v["alphamissense"] is not None]
+        if scored:
+            steps.append(f"Scored each one through **Ensembl VEP** with the "
+                         f"AlphaMissense plugin, then averaged "
+                         f"**{len(scored)}** values")
+    except Exception as e:
+        steps.append(f"Lookup failed: {e}")
+
+    mean, n, why = gene_missense_burden(gene, max_variants)
+    return {"score": mean, "n": n, "why": why, "steps": steps,
+            "variants": variants,
+            "detail": ("AlphaMissense predicts, for a single amino-acid "
+                       "substitution, how likely it is to cause disease. It "
+                       "needs one specific base change, so to say something "
+                       "about a whole gene we take that gene's variants already "
+                       "classified pathogenic in ClinVar and average their "
+                       "scores. Every coordinate is real — none are generated. "
+                       "A high average means coding changes here tend to be "
+                       "damaging, which is evidence the protein matters.")}
+
+
 def score_hypothesis(text: str, disease: str = DEFAULT_DISEASE,
                      validate: bool = True) -> dict:
     """Run every applicable model against one hypothesis.
