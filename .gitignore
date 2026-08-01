@@ -39,3 +39,4 @@ data/depmap/*.csv
 *.png
 .benchmate_run.log
 benchmark/live_*_scores.json
+runs/

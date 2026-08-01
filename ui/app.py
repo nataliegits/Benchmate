@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -235,7 +236,95 @@ def step_intro(text: str, step: str = "", nxt: str = ""):
 # ────────────────────────────────────────────────────────────
 # Sidebar: keys, cache, uploads, model routing
 # ────────────────────────────────────────────────────────────
+from co_scientist import trace as _trace
+
+
+def _run_id() -> str:
+    """The run this session is recording into, created on first use."""
+    if not st.session_state.get("run_id"):
+        st.session_state["run_id"] = _trace.new_run(
+            st.session_state.get("goal", "") or "")
+    return st.session_state["run_id"]
+
+
+def _tr(step: str, headline: str, **kw) -> None:
+    """Record a step. Never lets a trace failure disturb the actual work."""
+    try:
+        _trace.record(_run_id(), step, headline, **kw)
+    except Exception:
+        pass
+
+
+def trace_panel() -> None:
+    """The running record of this session, newest last.
+
+    Lives in the sidebar so it's visible from every tab: the point is that you
+    can watch the reasoning accumulate while you work, rather than reconstruct
+    it afterwards from whatever the final screen happens to show.
+    """
+    st.subheader("This run")
+    _ids = [r["run_id"] for r in _trace.runs()]
+    _cur = st.session_state.get("run_id")
+
+    _replay = st.session_state.get("trace_replay_id")
+    _show = _replay or _cur
+    if not _show:
+        st.caption("Nothing recorded yet. Ask a question in **Start here** and "
+                   "the record builds itself as you go.")
+    else:
+        _evs = _trace.read(_show)
+        if _replay:
+            # Demo mode: step through a finished run at your own pace, so a
+            # recorded walkthrough has repeatable timing and no live latency.
+            _n = st.slider("Replay step", 1, max(len(_evs), 1),
+                           min(len(_evs), st.session_state.get("trace_step", 1)),
+                           key="trace_step")
+            _evs = _evs[:_n]
+            st.caption(f"Replaying `{_replay}`, step {_n} of "
+                       f"{len(_trace.read(_replay))}.")
+        if not _evs:
+            st.caption("Recording. Nothing has happened yet.")
+        for _e in _evs:
+            st.markdown(
+                f"**{_trace.STEP_LABEL.get(_e['step'], _e['step'])}**  \n"
+                f"{_e['headline']}")
+            if _e.get("detail"):
+                st.caption(_e["detail"][:280])
+            for _k, _v in (_e.get("outputs") or {}).items():
+                st.caption(f"{_k}: {_v}")
+            st.divider()
+
+        _f = _trace.folder(_show)
+        _files = sorted(p.name for p in (_f / "files").glob("*")) \
+            if (_f / "files").exists() else []
+        with st.expander(f"Run folder ({len(_files)} file(s))"):
+            st.caption(f"`{_f}`")
+            for _n2 in _files:
+                st.caption(_n2)
+            st.download_button("Download the run summary",
+                               _trace.summarise(_show),
+                               file_name=f"benchmate_{_show}.txt",
+                               key=f"tr_dl_{_show}", use_container_width=True)
+
+    with st.expander("Past runs"):
+        if not _ids:
+            st.caption("No past runs yet.")
+        for _r in _trace.runs()[:8]:
+            st.caption(f"`{_r['run_id']}` · {_r['n_events']} steps · "
+                       f"{(_r.get('question') or '(no question)')[:48]}")
+        _pick = st.selectbox("Replay a run", ["(off)"] + _ids, key="trace_pick")
+        st.session_state["trace_replay_id"] = (
+            None if _pick == "(off)" else _pick)
+        if st.button("Start a fresh run", key="tr_new",
+                     use_container_width=True):
+            st.session_state.pop("run_id", None)
+            st.session_state.pop("trace_replay_id", None)
+            st.rerun()
+
+
 with st.sidebar:
+    trace_panel()
+    st.divider()
     st.subheader("Anthropic API key")
     # CRITICAL: do NOT pre-populate this field from os.environ. Even with
     # type="password" the rendered DOM value is visible to anyone using
@@ -291,7 +380,40 @@ with st.sidebar:
             dst = CACHE_DIR / name
             dst.write_bytes(f.read())
             st.success(f"Cached {name}")
+        _tr("cache", f"Loaded {len(uploaded)} perturbation file(s)",
+            outputs={"genes": ", ".join(
+                f.name.replace("_stats.csv", "") for f in uploaded)},
+            files=[str(CACHE_DIR / f.name) for f in uploaded])
         st.rerun()
+
+    # Colab writes the CSVs to your Downloads folder, and dragging them back in
+    # is the most annoying step in the loop. Look for them instead. Only helps
+    # when Benchmate runs on the same machine as the browser, so it's offered
+    # rather than assumed.
+    _dl = Path.home() / "Downloads"
+    if _dl.exists():
+        _found = sorted(_dl.glob("*_stats.csv"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)[:12]
+        _new = [p for p in _found if not (CACHE_DIR / p.name).exists()]
+        if _new:
+            st.caption(f"Found {len(_new)} new result file(s) in your Downloads "
+                       f"folder, straight from Colab.")
+            if st.button(f"Import {len(_new)} file(s)", key="colab_import",
+                         use_container_width=True):
+                _ok = []
+                for _p in _new:
+                    try:
+                        shutil.copy2(_p, CACHE_DIR / _p.name)
+                        _ok.append(_p.name)
+                    except Exception as _e:
+                        st.warning(f"Couldn't import {_p.name}: {_e}")
+                if _ok:
+                    st.success(f"Imported {', '.join(_ok)}")
+                    _tr("cache", f"Imported {len(_ok)} file(s) back from Colab",
+                        outputs={"genes": ", ".join(
+                            n.replace("_stats.csv", "") for n in _ok)},
+                        files=[str(CACHE_DIR / n) for n in _ok])
+                    st.rerun()
 
     st.divider()
     with st.expander("Model routing", expanded=False):
@@ -761,6 +883,23 @@ with tab2:
             st.session_state.run_ok = (_rc == 0)
             st.session_state.run_rc = _rc
             st.session_state.run_proc = None
+            if _rc == 0:
+                try:
+                    _sd = json.loads((REPO_ROOT / "state.json").read_text())
+                    _hs = sorted(_sd.get("hypotheses", []),
+                                 key=lambda h: h.get("elo", 0), reverse=True)
+                    _tr("generate", f"{len(_hs)} hypotheses proposed",
+                        detail=goal,
+                        outputs={"top": (_hs[0].get("statement", "")[:150]
+                                         if _hs else "-")},
+                        files=[str(REPO_ROOT / "state.json")])
+                    _tr("rank", "Elo tournament settled",
+                        outputs={"leader": f"{round(_hs[0].get('elo', 0))}"
+                                           if _hs else "-",
+                                 "matches": sum(h.get("matches_played", 0)
+                                                for h in _hs)})
+                except Exception:
+                    pass
             with st.expander("Run log", expanded=_rc != 0):
                 st.code(_tail or "(no output)")
             st.rerun()
@@ -1615,6 +1754,11 @@ with tab3:
                 for _row in _rows:
                     _live.record("Open Targets", _htext[:120], _elo,
                                  _row["score"], _row["target"])
+                _tr("crosscheck", f"Open Targets scored {len(_rows)} gene(s)",
+                    detail=_htext[:200],
+                    inputs={"genes": ", ".join(_genes), "disease": _dis},
+                    outputs={r["target"]: f"{r['score']} ({r['reading']})"
+                             for r in _rows})
                 st.session_state["xc_ot"] = {"rows": _rows, "problems": _probs,
                                              "exps": _exps}
         _r = st.session_state.get("xc_ot")
@@ -1662,6 +1806,11 @@ with tab3:
                     for _row in _rows:
                         _live.record("DepMap", _htext[:120], _elo,
                                      _row["score"], _row["target"])
+                    _tr("crosscheck", f"DepMap scored {len(_rows)} gene(s)",
+                        detail=_htext[:200],
+                        inputs={"genes": ", ".join(_genes)},
+                        outputs={r["target"]: f"{r['score']} ({r['reading']})"
+                                 for r in _rows})
                     st.session_state["xc_dm"] = {"rows": _rows,
                                                  "problems": _probs, "exps": _exps}
             _r = st.session_state.get("xc_dm")
@@ -1734,6 +1883,10 @@ with tab3:
                 for _row in _rows:
                     _live.record("AlphaMissense", _htext[:120], _elo,
                                  _row["score"], _row["target"])
+                _tr("crosscheck", f"AlphaMissense scored {len(_rows)} target(s)",
+                    detail=_htext[:200],
+                    outputs={r["target"]: f"{r['score']} ({r['reading']})"
+                             for r in _rows})
                 st.session_state["xc_am"] = {"rows": _rows, "problems": _probs,
                                              "exps": _exps}
         _r = st.session_state.get("xc_am")
@@ -1790,6 +1943,10 @@ with tab3:
                     _p, _n = generate_alphagenome_notebook(genes=_ag_list)
                 st.session_state["ag_nb_path"] = str(_p)
                 st.session_state["ag_nb_n"] = _n
+                _tr("notebook", f"Wrote an AlphaGenome notebook ({_n} variants)",
+                    detail="Real GTEx eQTLs for " + (", ".join(_ag_list)
+                                                     or "the ERAD benchmark set"),
+                    files=[str(_p)])
                 # Straight into Colab rather than download-then-upload: push the
                 # notebook to a gist and hand back the Colab URL. Same handoff
                 # the Geneformer tab uses.
@@ -2199,6 +2356,7 @@ def _bench_assay_panel():
         tmp = Path(tempfile.mkdtemp()) / "run.csv"
         tmp.write_bytes(up.getvalue())
         try:
+            _tr("bench", "Read an alamarBlue run from the rig")
             rec = assay.ingest(tmp, hypothesis=a_hyp.strip() or "assay_run",
                                drug=a_drug, cell=a_cell,
                                readout="alamarBlue red/blue reduction kinetics (TCS34725)",
@@ -2326,6 +2484,15 @@ with tab4:
                     st.session_state.loop_evidence = ev
                     st.session_state.loop_design = _exp.design_experiment(
                         st.session_state.loop_hyp, ev)
+                    _d0 = st.session_state.loop_design or {}
+                    _tr("design", "Designed an alamarBlue experiment",
+                        detail=str(_d0.get("aim", ""))[:200],
+                        inputs={"hypothesis": st.session_state.loop_hyp[:150]},
+                        outputs={"cell line": str(_d0.get("cell_line", "")),
+                                 "treatment": str(_d0.get("treatment", ""))[:120],
+                                 "reagents": ", ".join(
+                                     str(r) for r in (_d0.get("reagents_needed") or []))[:120],
+                                 "limitation": str(_d0.get("limitation", ""))[:150]})
                 except Exception as ex:
                     st.error(f"Design failed: {ex}")
         d = st.session_state.get("loop_design")
@@ -2408,6 +2575,10 @@ with tab4:
                    "the experimental compounds.")
         if hasattr(freezer, "reconcile"):
             rec = freezer.reconcile(needed, box)
+            _tr("reagents", f"Checked {len(needed)} reagent(s) against the freezer",
+                outputs={r["reagent"]: (f"found at {r['position']}"
+                                        if r["found"] else "not in this box")
+                         for r in rec})
         else:
             # A stale deploy may hold an older freezer module without reconcile();
             # fall back to locate() so the tab still works. Reboot to refresh.
@@ -2454,6 +2625,7 @@ with tab4:
             from co_scientist import experiment as _exp
             with st.spinner("Rethinking in light of the bench…"):
                 try:
+                    _tr("feedback", "Fed the bench result back to the agents")
                     st.session_state.loop_refined = _exp.refine_hypothesis(
                         st.session_state.loop_hyp, summary)
                 except Exception as ex:
