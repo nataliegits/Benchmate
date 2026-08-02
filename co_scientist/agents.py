@@ -271,6 +271,16 @@ def generation(state: CoScientistState) -> dict[str, Any]:
             lit_blocks.append(f"(PubMed error for '{q}': {e})")
     lit = "\n\n".join(lit_blocks) or "(no literature retrieved)"
 
+    # Papers the user pinned in Add evidence. Added to the agent's own search
+    # rather than replacing it: the agent's queries find things the user would
+    # not have looked for, and the pinned set says what the user already knows
+    # matters.
+    try:
+        from .literature import prompt_block as _pinned_block
+        lit += _pinned_block()
+    except Exception:
+        pass
+
     # Geneformer evidence if the goal mentions any gene we have data for.
     gf = _geneformer_context_for(goal, top_n=10)
     gf_block = (f"\n\nCached Geneformer in-silico perturbation evidence "

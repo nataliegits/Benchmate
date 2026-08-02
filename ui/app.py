@@ -839,7 +839,67 @@ with tab0:
 
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
-    step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench as well as the literature.", "2 of 5", "Generate &amp; rank")
+    step_intro("gathers what is already known: papers from PubMed, and your own perturbation data. Both feed the hypotheses.", "2 of 5", "Hypothesize")
+
+    # ---- Literature ---------------------------------------------------------
+    # The agent already searches PubMed on its own seed queries. This gives you
+    # a way to add the papers you know matter, and to see the kind of thing it
+    # reads before it writes a single hypothesis.
+    st.header("What is already known")
+    with st.container(border=True):
+        from co_scientist import literature as _lit
+
+        st.markdown("**Search PubMed**")
+        st.caption("Benchmate searches PubMed on its own during a run. Pin "
+                   "papers here and they go into the same prompt, so a "
+                   "hypothesis can lean on work you already trust.")
+        _lq = st.text_input(
+            "Search", key="lit_q",
+            value=st.session_state.get("sh_question", "")[:120],
+            placeholder="SEL1L ERAD bortezomib resistance myeloma")
+        if st.button("Search PubMed", key="lit_go", disabled=not _lq.strip()):
+            try:
+                with st.spinner("Searching PubMed…"):
+                    st.session_state["lit_hits"] = _lit.search(_lq, 8)
+                _tr("evidence", f"Searched PubMed for '{_lq[:60]}'",
+                    outputs={"results": len(st.session_state["lit_hits"])})
+            except Exception as _le:
+                st.error(f"PubMed search failed: {_le}")
+
+        _pinned_ids = {r["pmid"] for r in _lit.load_pinned()}
+        for _h in st.session_state.get("lit_hits", []):
+            _c1, _c2 = st.columns([6, 1])
+            with _c1:
+                st.markdown(f"[{_h['title']}]({_h['url']})")
+                st.caption(f"PMID {_h['pmid']}  ·  "
+                           f"{(_h['abstract'] or 'No abstract.')[:190]}...")
+            with _c2:
+                if _h["pmid"] in _pinned_ids:
+                    st.caption("pinned")
+                elif st.button("Pin", key=f"pin_{_h['pmid']}"):
+                    _lit.pin(_h)
+                    _tr("evidence", "Pinned a paper",
+                        detail=_h["title"][:150],
+                        outputs={"pmid": _h["pmid"]})
+                    st.rerun()
+
+        _pins = _lit.load_pinned()
+        if _pins:
+            st.divider()
+            st.markdown(f"**Pinned, and going into the next run ({len(_pins)})**")
+            for _r in _pins:
+                _pc1, _pc2 = st.columns([6, 1])
+                _pc1.markdown(
+                    f"[{_r['title'][:110]}](https://pubmed.ncbi.nlm.nih.gov/"
+                    f"{_r['pmid']}/)")
+                if _pc2.button("Remove", key=f"unpin_{_r['pmid']}"):
+                    _lit.unpin(_r["pmid"])
+                    st.rerun()
+        else:
+            st.caption("Nothing pinned. The agent will still run its own "
+                       "search when you generate hypotheses.")
+
+    st.divider()
     st.header("Add genes to the perturbation cache")
     st.write(
         "Enter the gene symbols you want to perturb and pick the cell "
