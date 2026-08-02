@@ -220,7 +220,7 @@ st.title("Benchmate")
 st.markdown(
     "<p style='color:#555555; font-size:1.05rem; margin-top:-8px; "
     "font-family: Inter, sans-serif;'>"
-    "Your AI lab coworker. From question, to hypothesis, to bench, and back."
+    "An AI research scientist that works through the whole experiment with you."
     "</p>",
     unsafe_allow_html=True,
 )
@@ -406,7 +406,7 @@ with st.sidebar:
     else:
         # Make sure no leaked key from a previous session lingers
         os.environ.pop("ANTHROPIC_API_KEY", None)
-        st.caption("Required for the Run Benchmate tab.")
+        st.caption("Required for the Hypothesize tab.")
 
     st.divider()
     st.subheader("Cached Geneformer perturbations")
@@ -584,8 +584,8 @@ if _startup_skew:
 tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1 · Start here",
     "2 · Add evidence",
-    "3 · Generate & rank",
-    "4 · Stress-test",
+    "3 · Hypothesize",
+    "4 · Cross-check",
     "5 · Run experiment",
     "About",
 ])
@@ -791,12 +791,12 @@ with tab0:
                 st.success("Filled. Open the New perturbation tab above.")
 
         with st.container(border=True):
-            st.markdown("**2 · Generate & rank hypotheses**: Run Benchmate tab")
+            st.markdown("**2 · Hypothesize**")
             st.markdown(
                 f"Run **{iters} iterations** on your question. The agents "
                 "propose hypotheses and rank them by Elo."
             )
-            if st.button("Prefill the Run Benchmate tab", key="sh_fill2"):
+            if st.button("Prefill the Hypothesize tab", key="sh_fill2"):
                 # Name the planned genes in the goal. The agents match cached
                 # perturbation data by gene symbol, so a goal phrased as
                 # "what ERAD-pathway genes..." would otherwise never surface
@@ -839,7 +839,7 @@ with tab0:
 
 # ── Tab 1 ────────────────────────────────────────────────────
 with tab1:
-    step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench, not just the literature.", "2 of 5", "Generate &amp; rank")
+    step_intro("adds your own experimental data (Geneformer perturbations) so the agents reason from your bench as well as the literature.", "2 of 5", "Generate &amp; rank")
     st.header("Add genes to the perturbation cache")
     st.write(
         "Enter the gene symbols you want to perturb and pick the cell "
@@ -926,7 +926,7 @@ with tab1:
 
 # ── Tab 2. Run Benchmate ────────────────────────────────────
 with tab2:
-    step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Stress-test")
+    step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Cross-check")
     st.header("Run the Co-Scientist loop")
     goal = st.text_area(
         "Research goal",
@@ -1422,7 +1422,7 @@ def _benchmark_section():
         st.markdown(
             "**3. Compare fair vs naive judge**: same gold set, ranked "
             "under both judges. Δ Spearman tells you whether the "
-            "order-swap is actually buying accuracy."
+            "order-swap is buying accuracy."
         )
         _show_saved("compare_fair_naive")
         col_a, col_b = st.columns(2)
@@ -1490,7 +1490,7 @@ def _benchmark_section():
             "(genes / diseases / pathways resolved via "
             "[OntoMCP](https://github.com/jeanlouishoneine-tech/OntoMCP)) "
             "injected into the prompt. Δ Spearman tells you whether grounding "
-            "in structured knowledge actually beats reading the text alone."
+            "in structured knowledge beats reading the text alone."
         )
         _show_saved("compare_ontology")
 
@@ -1766,7 +1766,7 @@ with tab3:
             for _k in ("xc_ot", "xc_dm", "xc_am"):
                 st.session_state.pop(_k, None)
     else:
-        st.caption("No leaderboard yet. Run **Generate & rank** first, or paste "
+        st.caption("No leaderboard yet. Run **Hypothesize** first, or paste "
                    "a hypothesis below.")
     st.session_state.setdefault("xc_text", "")
     st.text_area("Hypothesis", key="xc_text", height=80)
@@ -1835,7 +1835,7 @@ with tab3:
     # ---------------- Open Targets ----------------
     with st.container(border=True):
         st.markdown("**Open Targets**: *"
-                    + _q("is {g} actually linked to this disease?") + "*")
+                    + _q("is {g} linked to this disease?") + "*")
         st.caption("Public API · nothing to install · genetics, literature and "
                    "known drugs, aggregated into one 0-1 association score.")
         _c1, _c2 = st.columns([2, 1])
@@ -1885,7 +1885,7 @@ with tab3:
     # ---------------- DepMap ----------------
     with st.container(border=True):
         st.markdown("**DepMap**: *"
-                    + _q("do cancer cells actually need {g} to survive?") + "*")
+                    + _q("do cancer cells need {g} to survive?") + "*")
         _dm_ok = target_scorer.depmap_available()
         if _dm_ok:
             _dm_src = target_scorer.depmap_source()
@@ -2095,13 +2095,13 @@ with tab3:
         if not _ag_list:
             st.caption("With no genes it falls back to the built-in ERAD "
                        "benchmark set: right for calibration, but it won't "
-                       "reflect your question.")
+                       "match your question.")
 
     # ---------------- Boltz ----------------
     with st.container(border=True):
         from co_scientist import boltz_scorer as _bz
 
-        st.markdown("**Boltz**: *does the drug actually bind the target?*")
+        st.markdown("**Boltz**: *does the drug bind the target?*")
         st.caption("Co-folds a protein with a small molecule and reports a "
                    "binding confidence (0-1). Unlike the others it needs two "
                    "specific things a sentence doesn't carry: the protein's "
@@ -2315,7 +2315,7 @@ with tab3:
         # ----- Boltz: structure / binding -----
         with st.container(border=True):
             st.markdown(
-                "**Boltz: structure & binding** *(does the drug actually bind the "
+                "**Boltz: structure & binding** *(does the drug bind the "
                 "target?)*. The complement to AlphaGenome: it scores binding-style "
                 "hypotheses. Drop a `boltz_scores.json` (merged Elo + score)."
             )
@@ -2397,7 +2397,7 @@ with tab3:
 
         _simple_panel(
             "Open Targets: disease association",
-            "*is this gene genuinely linked to the disease?* (genetics + literature + drugs). "
+            "*is this gene linked to the disease?* (genetics, literature, drugs). "
             "Free, no key.",
             "benchmark/opentargets_scores.json", "elo_vs_opentargets",
             "ot_up", "ot_btn", "association",
@@ -2630,7 +2630,7 @@ with tab5:
 
 # ── Tab 4. Experiment (design → execute → results → inventory) ─
 with tab4:
-    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "loops back to step 3: the bench result re-ranks the ideas")
+    step_intro("turns the winning hypothesis into a runnable assay, finds the reagents in your freezer, and reads the result back in.", "5 of 5", "back to Hypothesize, where the bench result re-ranks the ideas")
     st.header("Experiment: design, run, and learn")
     st.caption("Take a hypothesis to the bench and back: design the assay → find "
                "the reagents → run it → feed the result back to sharpen the idea.")
