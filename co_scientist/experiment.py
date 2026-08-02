@@ -27,6 +27,73 @@ RIG_CAPABILITY = (
 )
 
 
+
+# ---------------------------------------------------------------------------
+# What you can actually measure
+# ---------------------------------------------------------------------------
+# Benchmate started around one assay because that's the rig that exists on my
+# kitchen table. But the loop is not about alamarBlue, it's about closing the
+# gap between a hypothesis and a number. Any readout that lands as a CSV works
+# the same way, so the assay is a parameter rather than an assumption.
+
+ASSAYS: dict[str, dict] = {
+    "viability": {
+        "label": "Viability (alamarBlue / resazurin)",
+        "question": "Are the cells alive after treatment?",
+        "answers": "kill versus no-kill across a dose range",
+        "cannot": ("mechanism, localisation, expression, or protein "
+                   "interactions. It also cannot separate a compound that "
+                   "kills from one that merely slows metabolism"),
+        "readout": "red/blue ratio over time, then viability as % of control",
+        "csv": "t_s, R, G, B, red_blue (from the rig), or well/value",
+        "rig": ("Runs on a $60 DIY reader: a colour sensor and a "
+                "microcontroller. Any plate reader works too."),
+    },
+    "qpcr": {
+        "label": "Gene expression (qPCR)",
+        "question": "Did the transcript level actually change?",
+        "answers": "fold change in a target gene versus a reference gene",
+        "cannot": ("protein level, localisation, or whether the change "
+                   "matters for survival. Transcript is not protein"),
+        "readout": "delta delta Ct, expressed as fold change versus control",
+        "csv": "sample, target, Ct (one row per well), plus a reference gene",
+        "rig": ("Needs a thermocycler, so this is a core-facility or shared "
+                "instrument experiment rather than a benchtop one."),
+    },
+    "proliferation": {
+        "label": "Proliferation (growth over time)",
+        "question": "Did the cells keep dividing?",
+        "answers": "growth rate and doubling time versus control",
+        "cannot": ("whether slowed growth is arrest or death, and nothing "
+                   "about mechanism. Pair it with viability to tell those "
+                   "apart"),
+        "readout": "cell count or confluence at intervals, then growth rate",
+        "csv": "time_h, condition, value (count or % confluence)",
+        "rig": ("Cell counts, confluence from an imager, or the same "
+                "colorimetric rig read at intervals."),
+    },
+}
+
+
+def assay_capability(assay: str = "viability") -> str:
+    """The capability block for the chosen assay, in the same shape as the
+    original rig constraint: what it can measure, and what it cannot."""
+    a = ASSAYS.get(assay, ASSAYS["viability"])
+    return (
+        f"The assay available is: {a['label']}.\n"
+        f"It answers: {a['question']} Specifically {a['answers']}.\n"
+        f"The readout is {a['readout']}, exported as a CSV ({a['csv']}).\n"
+        f"It CANNOT establish {a['cannot']}.\n"
+        "There is NO capacity for genetic manipulation: no shRNA/siRNA, no "
+        "CRISPR, no transfection, no overexpression, no immunoblot, no co-IP, "
+        "no pulse-chase.\n"
+        "So if the hypothesis is genetic (a knockdown, an overexpression, a "
+        "protein-level claim), do NOT propose those. Design the closest "
+        "PHARMACOLOGICAL proxy: a small molecule that perturbs the same "
+        "pathway arm, and be explicit about what that proxy cannot establish."
+    )
+
+
 def _same_hypothesis(a: str, b: str) -> bool:
     """Loose match between a recorded label and a hypothesis statement.
 
@@ -77,14 +144,39 @@ def project_evidence(hypothesis: str = "") -> str:
     live = []
     try:
         from benchmark import live_scores as _ls
+
+        # Which genes is this hypothesis about? Used as the fallback match.
+        want_genes: set[str] = set()
+        if hypothesis:
+            try:
+                from . import hypothesis_scan as _hsc
+                want_genes = {g.upper()
+                              for g in _hsc.genes_in(hypothesis,
+                                                     validate=False)[0]}
+            except Exception:
+                pass
+
         for model in ("Open Targets", "DepMap", "AlphaMissense",
                       "AlphaGenome", "Boltz"):
             for r in _ls.load(model):
-                if hypothesis and not _same_hypothesis(r.get("label", ""),
-                                                       hypothesis):
+                target = str(r.get("target") or "")
+                how = ""
+                if not hypothesis:
+                    how = ""
+                elif _same_hypothesis(r.get("label", ""), hypothesis):
+                    how = ""
+                elif want_genes and target.split()[0].upper() in want_genes:
+                    # Cross-check and Design can be looking at differently
+                    # worded statements about the same gene: the panel records
+                    # against the text you scored, the designer asks about the
+                    # text you're designing for. A gene-level score is still
+                    # the relevant evidence, so keep it and say where it came
+                    # from rather than silently dropping it.
+                    how = " (scored on a related hypothesis about this gene)"
+                else:
                     continue
-                live.append(f"  {model} on {r.get('target') or r.get('label')}: "
-                            f"{r.get('score')}")
+                live.append(f"  {model} on {target or r.get('label')}: "
+                            f"{r.get('score')}{how}")
     except Exception:
         pass
     if live:
@@ -110,7 +202,8 @@ def project_evidence(hypothesis: str = "") -> str:
     return "\n\n".join(bits)
 
 
-def design_experiment(hypothesis: str, evidence: str = "") -> dict:
+def design_experiment(hypothesis: str, evidence: str = "",
+                      assay: str = "viability") -> dict:
     """Return a runnable alamarBlue design for `hypothesis` as a dict with keys:
     aim, cell_line, treatment, comparison, controls[], reagents_needed[],
     readout, key_confound, limitation.
@@ -124,8 +217,9 @@ def design_experiment(hypothesis: str, evidence: str = "") -> dict:
           f"Never repeat an experiment already on record:\n{evidence}\n\n"
           if evidence.strip() else "")
     return call_json(
-        f"Hypothesis to test:\n{hypothesis}\n\n{ev}{RIG_CAPABILITY}\n\n"
-        "Design the cleanest alamarBlue experiment to test it.\n"
+        f"Hypothesis to test:\n{hypothesis}\n\n{ev}{assay_capability(assay)}\n\n"
+        f"Design the cleanest {ASSAYS.get(assay, ASSAYS['viability'])['label']} "
+        f"experiment to test it.\n"
         "FORMAT RULES: follow exactly:\n"
         "- Every value is a PLAIN STRING (or a list of plain strings). No nested "
         "objects.\n"
@@ -205,7 +299,8 @@ def refine_hypothesis(hypothesis: str, result_summary: str,
 # The bench protocol
 # ---------------------------------------------------------------------------
 
-def protocol_for(design: dict, plate: str = "96-well") -> dict:
+def protocol_for(design: dict, plate: str = "96-well",
+                 assay: str = "viability") -> dict:
     """A step-by-step alamarBlue protocol for a given design.
 
     Built from a fixed template with the design's own values slotted in, not
@@ -233,6 +328,12 @@ def protocol_for(design: dict, plate: str = "96-well") -> dict:
     reagents = _s("reagents_needed") or []
     if isinstance(reagents, str):
         reagents = [reagents]
+
+    if assay == "qpcr":
+        return _protocol_qpcr(design, cell, reagents, controls, treat)
+    if assay == "proliferation":
+        return _protocol_proliferation(design, cell, reagents, controls, treat,
+                                       plate)
 
     materials = [
         f"{cell} cells, in log-phase growth",
@@ -309,10 +410,11 @@ def protocol_for(design: dict, plate: str = "96-well") -> dict:
             "notes": notes}
 
 
-def protocol_text(design: dict) -> str:
+def protocol_text(design: dict, assay: str = "viability") -> str:
     """The protocol as plain text, for a lab notebook or a printout."""
-    p = protocol_for(design)
-    out = ["alamarBlue viability assay", "", "MATERIALS"]
+    p = protocol_for(design, assay=assay)
+    out = [ASSAYS.get(assay, ASSAYS["viability"])["label"], "",
+           "MATERIALS"]
     out += [f"  - {m}" for m in p["materials"]]
     out += ["", "PROCEDURE"]
     n = 0
@@ -325,3 +427,114 @@ def protocol_text(design: dict) -> str:
     out += ["", "TIMING"] + [f"  - {t}" for t in p["timing"]]
     out += ["", "NOTES"] + [f"  - {x}" for x in p["notes"]]
     return "\n".join(out)
+
+
+def _protocol_qpcr(design, cell, reagents, controls, treat) -> dict:
+    """Standard delta delta Ct workflow. The chemistry-specific numbers stay
+    generic on purpose: cycling conditions belong to your kit's insert, and a
+    model inventing an annealing temperature is how you get a failed plate."""
+    materials = [
+        f"{cell} cells, treated as in the design",
+        "RNA extraction kit, or TRIzol",
+        "DNase I, to remove genomic DNA carryover",
+        "Reverse transcription kit",
+        "qPCR master mix (SYBR or probe based)",
+        "Primers for the target gene, and for a reference gene",
+        "96-well qPCR plate and optical seals",
+    ] + [f"{r} (from the freezer)" for r in reagents]
+    steps = [
+        f"Treat {cell}: {treat}. Include the controls in the same experiment, "
+        f"harvested at the same time:",
+    ] + [f"    - {c}" for c in controls] + [
+        "Harvest and extract RNA. Work fast and cold; RNA degrades while you "
+        "decide what to do next.",
+        "Check RNA quality and concentration. A 260/280 near 2.0 is what you "
+        "want. Do not skip this and then wonder why the Ct values scatter.",
+        "DNase-treat the RNA. Without it, genomic DNA amplifies and inflates "
+        "your apparent expression.",
+        "Reverse transcribe an equal mass of RNA per sample. Equal mass is the "
+        "whole basis of the comparison.",
+        "Include a no-reverse-transcriptase control for at least one sample. "
+        "If it amplifies, you are measuring DNA, not transcript.",
+        "Set up the qPCR plate in technical triplicate for both the target and "
+        "the reference gene, plus a no-template control per primer pair.",
+        "Run the cycling program from your master mix's insert, and finish "
+        "with a melt curve if you are using SYBR.",
+        "Check the melt curve is a single peak per primer pair. Two peaks "
+        "means you are amplifying more than one thing.",
+        "Export the Ct table as CSV (sample, target, Ct) and drop it into "
+        "Benchmate's Results tab, which computes delta delta Ct against your "
+        "control and reference gene.",
+    ]
+    timing = [
+        "Treatment: the window from the design",
+        "Harvest to cDNA: about 3 h",
+        "qPCR run: 1.5 to 2 h",
+        "Total: one full day, comfortably",
+    ]
+    notes = [
+        "Transcript is not protein. A fold change tells you the message "
+        "level moved, not that the protein or the phenotype followed.",
+        "Your reference gene must not respond to the treatment. Under proteasome "
+        "inhibition or ER stress, common housekeepers can shift, which silently "
+        "distorts every fold change on the plate.",
+        "Technical triplicates measure your pipetting. Biological replicates "
+        "measure the biology. You need both, and only the second kind counts "
+        "as an n.",
+    ]
+    return _finish(design, materials, steps, timing, notes)
+
+
+def _protocol_proliferation(design, cell, reagents, controls, treat, plate) -> dict:
+    """Growth over time. The measurement is easy; the seeding density and the
+    confluence ceiling are what actually decide whether the result means
+    anything."""
+    materials = [
+        f"{cell} cells, in log-phase growth",
+        f"{plate} flat-bottom plate, or several for destructive timepoints",
+        "Complete growth medium, pre-warmed",
+        "A counting method: haemocytometer, automated counter, or imager",
+    ] + [f"{r} (from the freezer)" for r in reagents]
+    steps = [
+        f"Seed {cell} at a density low enough that untreated wells are still "
+        f"sub-confluent at your last timepoint. If the control saturates, every "
+        f"treated condition looks better than it is.",
+        "Let the cells attach overnight.",
+        "Record a time-zero reading before dosing. Without it you cannot tell "
+        "a growth difference from a seeding difference.",
+        f"Dose the plate: {treat}. Set up the controls alongside:",
+    ] + [f"    - {c}" for c in controls] + [
+        "Read at regular intervals across at least two doublings. Three "
+        "timepoints is a line; two is a guess.",
+        "Keep the plate's time out of the incubator short and consistent "
+        "between reads. Temperature swings show up as growth artifacts.",
+        "Export as CSV (time_h, condition, value) and drop it into Benchmate's "
+        "Results tab, which fits the growth rate and compares doubling times.",
+    ]
+    timing = [
+        "Seeding to dosing: overnight",
+        "Reading window: 48 to 96 h, depending on doubling time",
+        "Hands-on: about 15 minutes per timepoint",
+    ]
+    notes = [
+        "Slower growth is not death. A cytostatic compound and a cytotoxic one "
+        "produce the same flat curve, which is why this pairs naturally with a "
+        "viability readout.",
+        "Confluence is not proportional to cell number once cells start "
+        "crowding. Stay in the linear range or the effect size is meaningless.",
+        "Compare doubling times, not endpoint values. An endpoint difference "
+        "can come entirely from an uneven seed.",
+    ]
+    return _finish(design, materials, steps, timing, notes)
+
+
+def _finish(design, materials, steps, timing, notes) -> dict:
+    """Attach the design's own limitation and confound to any protocol."""
+    lim = str((design or {}).get("limitation") or "")
+    conf = str((design or {}).get("key_confound") or "")
+    if lim:
+        notes.append(f"From the design, what this cannot establish: {lim}")
+    if conf:
+        notes.append(f"Watch for: {conf}")
+    return {"materials": materials, "steps": steps, "timing": timing,
+            "notes": notes}

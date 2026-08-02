@@ -2425,78 +2425,162 @@ with tab3:
 
 # ── Bench-assay panel (reused inside Experiment → Results) ───
 def _bench_assay_panel():
-    st.write(
-        "Upload a run from the alamarBlue rig (columns `t_s, R, G, B, red_blue`). "
-        "Benchmate turns the colour kinetics into a viability readout and files it "
-        "as evidence: so the next run reasons over the bench result, not just the "
-        "literature. This is the *test → learn* edge of the loop."
-    )
+    """Results and feedback, as two numbered steps.
 
-    up = st.file_uploader("alamarBlue run CSV", type=["csv"], key="assay_up")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        a_hyp = st.text_input("Hypothesis label", value="SEL1L_kifunensine", key="a_hyp",
-                              help="Ties this result to a hypothesis; agents match on it.")
-        a_drug = st.text_input("Drug / treatment",
-                               value="kifunensine (10 uM, 48h) + bortezomib", key="a_drug")
-    with col_b:
-        a_cell = st.text_input("Cell line", value="RPMI-8226, bortezomib-resistant", key="a_cell")
-        a_ctrl = st.number_input("Vehicle-control Δ(red/blue) (optional)",
-                                 value=0.24, min_value=0.0, step=0.01, key="a_ctrl",
-                                 help="Supply the control's reduction Δ to express viability as % of control.")
+    Two problems with the old version. It was busy: eight inputs, a chart, four
+    metrics and a results list all at one level, so the important part got
+    lost. And the important part was the last thing on the page, unlabelled, so
+    people never found the step that closes the loop.
 
-    if st.button("Ingest assay → evidence", type="primary", disabled=up is None):
-        import tempfile, pandas as pd
+    Now it reads as: 1, here is what the run said. 2, here is what that does to
+    the hypothesis. Nothing else competes.
+    """
+    from co_scientist import experiment as _expm
+
+    _d = st.session_state.get("loop_design") or {}
+    _assay = st.session_state.get("loop_assay", "viability")
+    _spec = _expm.ASSAYS.get(_assay, _expm.ASSAYS["viability"])
+
+    # ---- keep the fields in step with the design ---------------------------
+    # These are widget-keyed, so passing value= only works on first render.
+    # That's why they stayed on a cached cell line from an old design. Write
+    # into session_state instead, and only when the design changes, so a hand
+    # edit survives.
+    _sig = f"{_d.get('cell_line','')}|{_d.get('treatment','')}|{_assay}"
+    if _d and st.session_state.get("_assay_sig") != _sig:
+        st.session_state["_assay_sig"] = _sig
+        st.session_state["a_cell"] = str(_d.get("cell_line") or "")
+        st.session_state["a_drug"] = str(_d.get("treatment") or "")
+        _lbl = ", ".join(str(r) for r in (_d.get("reagents_needed") or []))
+        st.session_state["a_hyp"] = (
+            _lbl.split(",")[0].strip().lower().replace(" ", "_")
+            or "bench_run")
+
+    st.markdown("### 1. What came back from the bench")
+    if _d:
+        st.caption(f"Reading this as your **{_spec['label']}** design: "
+                   f"{_d.get('cell_line', '?')}, {_d.get('treatment', '?')}")
+    else:
+        st.caption("No design on record, so these fields start blank. Design "
+                   "an experiment first and they fill themselves in.")
+    st.caption(f"Expected CSV columns: `{_spec['csv']}`")
+
+    up = st.file_uploader(f"{_spec['label']} results CSV", type=["csv"],
+                          key="assay_up")
+
+    with st.expander("Details of this run", expanded=not _d):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.session_state.setdefault("a_hyp", "bench_run")
+            a_hyp = st.text_input("Label for this result", key="a_hyp",
+                                  help="Ties the result to a hypothesis; the "
+                                       "agents match on it.")
+            st.session_state.setdefault("a_drug", "")
+            a_drug = st.text_input("Treatment", key="a_drug")
+        with col_b:
+            st.session_state.setdefault("a_cell", "")
+            a_cell = st.text_input("Cell line", key="a_cell")
+            a_ctrl = st.number_input(
+                "Vehicle-control delta (optional)", value=0.24, min_value=0.0,
+                step=0.01, key="a_ctrl",
+                help="The control's reduction delta, so viability can be "
+                     "expressed as a percentage of control.")
+
+    if st.button("Read the result", type="primary", disabled=up is None,
+                 use_container_width=True):
+        import tempfile
         tmp = Path(tempfile.mkdtemp()) / "run.csv"
         tmp.write_bytes(up.getvalue())
         try:
-            _tr("bench", "Read an alamarBlue run from the rig")
-            rec = assay.ingest(tmp, hypothesis=a_hyp.strip() or "assay_run",
-                               drug=a_drug, cell=a_cell,
-                               readout="alamarBlue red/blue reduction kinetics (TCS34725)",
-                               control_delta=a_ctrl or None)
+            _tr("bench", f"Read a {_spec['label']} run",
+                detail=f"{a_cell}, {a_drug}")
+            st.session_state["assay_rec"] = assay.ingest(
+                tmp, hypothesis=a_hyp.strip() or "bench_run",
+                drug=a_drug, cell=a_cell, readout=_spec["readout"],
+                control_delta=a_ctrl or None)
+            st.session_state["assay_csv"] = str(tmp)
         except Exception as e:
             st.error(f"Could not read that CSV: {e}")
-            st.stop()
 
+    rec = st.session_state.get("assay_rec")
+    if rec:
         m = rec["metrics"]
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         c1.metric("baseline", m["baseline"])
-        c2.metric("plateau", m["plateau"])
-        c3.metric("Δ reduction", m["delta"])
+        c2.metric("change", m["delta"])
         pct = rec["viability"].get("viability_pct_of_control")
-        c4.metric("viability", f"{pct:.0f}%" if pct is not None else "-")
+        c3.metric("viability", f"{pct:.0f}%" if pct is not None else "-")
 
-        rows = assay.read_run(tmp)
-        df = pd.DataFrame(rows).set_index("t_s")[["red_blue"]]
-        st.line_chart(df, height=240)
-
-        verdict = rec["viability"]["verdict"]
         direction = rec["direction_for_benchmate"]
+        verdict = rec["viability"]["verdict"]
         (st.success if direction == "up-weight" else
          st.warning if direction == "down-weight" else st.info)(
-            f"**{verdict}.** {rec['interpretation']} "
-            f"Suggested action: **{direction}**.")
-        st.caption(f"Saved to `data/rig/{a_hyp.strip()}_assay.json`: "
-                   "the next Benchmate run will factor this in.")
-        with st.expander("Evidence block the agents will read"):
+            f"**{verdict}.** {rec['interpretation']}")
+
+        with st.expander("The curve, and what the agents will read"):
+            try:
+                import pandas as pd
+                rows = assay.read_run(Path(st.session_state["assay_csv"]))
+                st.line_chart(pd.DataFrame(rows).set_index("t_s")[["red_blue"]],
+                              height=200)
+            except Exception:
+                pass
             st.code(assay.summarize(rec))
 
+    # ---- step 2: the part that closes the loop -----------------------------
     st.divider()
-    on_record = assay.available_assays()
-    if on_record:
-        st.subheader("Bench results on record")
+    st.markdown("### 2. What it means for the hypothesis")
+    if not rec:
+        st.caption("Read a result above, and Benchmate will work out what it "
+                   "does to the ranking.")
+        return
+
+    st.caption("Benchmate re-reads the hypothesis against this result and the "
+               "design that produced it, then says whether it survived.")
+    _hyp = st.session_state.get("loop_hyp", "")
+    st.markdown(f"> {_hyp[:260]}" if _hyp else "_No hypothesis selected._")
+
+    if st.button("Feed this back into the hypothesis", type="primary",
+                 use_container_width=True, key="loop_feedback_btn"):
+        try:
+            from co_scientist import experiment as _exp
+            with st.spinner("Re-reading the hypothesis against the result…"):
+                _tr("feedback", "Fed the bench result back to the agents")
+                st.session_state.loop_refined = _exp.refine_hypothesis(
+                    _hyp, assay.summarize(rec),
+                    design=st.session_state.get("loop_design"))
+        except Exception as ex:
+            st.error(f"Refine failed: {ex}")
+
+    ref = st.session_state.get("loop_refined")
+    if ref:
+        _v = str(ref.get("verdict", "")).lower()
+        (st.success if "support" in _v else
+         st.warning if "weaken" in _v else st.info)(
+            f"**{ref.get('verdict', 'updated')}.** {ref.get('rationale', '')}")
+        st.markdown("**Sharper hypothesis**")
+        st.markdown(f"> {ref.get('revised_hypothesis', '')}")
+        st.markdown("**Next experiment**")
+        st.markdown(ref.get("next_experiment", ""))
+        _tr("feedback", f"Verdict: {ref.get('verdict', '?')}",
+            outputs={"revised": str(ref.get("revised_hypothesis", ""))[:250]})
+        if st.button("Design an experiment for the sharper hypothesis",
+                     key="loop_use_refined", use_container_width=True):
+            st.session_state["_pending_hyp"] = ref.get("revised_hypothesis", "")
+            st.session_state.pop("loop_design", None)
+            st.rerun()
+
+    with st.expander("Everything on record from the bench"):
+        on_record = assay.available_assays()
+        if not on_record:
+            st.caption("Nothing yet.")
         for label in on_record:
-            rec = assay.assay_evidence(label)
-            if not rec:
-                continue
-            st.markdown(
-                f"- **{label}**: {rec['drug']} on {rec['cell_line']}: "
-                f"{rec['viability']['verdict']} "
-                f"(*{rec['direction_for_benchmate']}*)"
-            )
-    else:
-        st.caption("No bench results on record yet. Ingest a run above.")
+            r2 = assay.assay_evidence(label)
+            if r2:
+                st.markdown(f"- **{label}**: {r2['drug']} on "
+                            f"{r2['cell_line']}: {r2['viability']['verdict']} "
+                            f"(*{r2['direction_for_benchmate']}*)")
+
 
 # ── Tab 5. About (kept last) ────────────────────────────────
 with tab5:
@@ -2543,7 +2627,22 @@ with tab4:
     # the widget with key 'loop_hyp' is instantiated, so it takes effect)
     if "_pending_hyp" in st.session_state:
         st.session_state["loop_hyp"] = st.session_state.pop("_pending_hyp")
-    st.session_state.setdefault("loop_hyp", DEFAULT_HYP)
+    # Start from the hypothesis you actually worked on, not a hardcoded demo
+    # string. This was the bug behind "the design tab doesn't ingest the models
+    # I already scored": the cross-check panel records against the hypothesis
+    # you scored there, while Design was silently sitting on a default about a
+    # different gene, so the lookup correctly found nothing.
+    if "loop_hyp" not in st.session_state:
+        _seed = (st.session_state.get("xc_text") or "").strip()
+        if not _seed:
+            try:
+                _sd = json.loads((REPO_ROOT / "state.json").read_text())
+                _top = sorted(_sd.get("hypotheses", []),
+                              key=lambda h: h.get("elo", 0), reverse=True)
+                _seed = _top[0].get("statement", "") if _top else ""
+            except Exception:
+                _seed = ""
+        st.session_state["loop_hyp"] = _seed or DEFAULT_HYP
     have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     d_tab, e_tab, r_tab, inv_tab = st.tabs([
@@ -2555,6 +2654,37 @@ with tab4:
 
     # ---------- 1. Design the experiment ----------
     with d_tab:
+        # Pick from the leaderboard so Design and Cross-check are talking about
+        # the same hypothesis. Selecting here also refreshes the evidence the
+        # designer reads.
+        try:
+            _lb = sorted(json.loads((REPO_ROOT / "state.json").read_text())
+                         .get("hypotheses", []),
+                         key=lambda h: h.get("elo", 0), reverse=True)[:5]
+            _opts = [h.get("statement", "") for h in _lb if h.get("statement")]
+        except Exception:
+            _opts = []
+        if _opts:
+            _lp = st.selectbox(
+                "From your leaderboard", _opts,
+                format_func=lambda s: (s[:110] + "...") if len(s) > 110 else s,
+                key="loop_pick")
+            if st.session_state.get("_loop_last_pick") != _lp:
+                st.session_state["_loop_last_pick"] = _lp
+                st.session_state["loop_hyp"] = _lp
+                st.session_state.pop("loop_design", None)
+        from co_scientist import experiment as _expa
+        _akeys = list(_expa.ASSAYS)
+        _ai = st.radio(
+            "What will you measure?", _akeys,
+            format_func=lambda k: _expa.ASSAYS[k]["label"],
+            horizontal=True, key="loop_assay",
+            help="The design, the protocol and the expected CSV all follow "
+                 "from this.")
+        _aspec = _expa.ASSAYS[_ai]
+        st.caption(f"{_aspec['question']} Gives you {_aspec['answers']}. "
+                   f"Cannot establish {_aspec['cannot']}.")
+        st.caption(_aspec["rig"])
         st.text_area("Hypothesis to test", key="loop_hyp", height=90)
         _ev_preview = ""
         try:
@@ -2569,7 +2699,7 @@ with tab4:
                 st.code(_ev_preview)
         if not have_key:
             st.info("Add your Anthropic API key in the sidebar to design an experiment.")
-        if st.button("Design an alamarBlue experiment", type="primary",
+        if st.button(f"Design a {_aspec['label']} experiment", type="primary",
                      disabled=not have_key, key="loop_design_btn"):
             from co_scientist import experiment as _exp
             with st.spinner("Designing the cleanest test…"):
@@ -2577,7 +2707,8 @@ with tab4:
                     ev = _exp.project_evidence(st.session_state.loop_hyp)
                     st.session_state.loop_evidence = ev
                     st.session_state.loop_design = _exp.design_experiment(
-                        st.session_state.loop_hyp, ev)
+                        st.session_state.loop_hyp, ev,
+                        assay=st.session_state.get("loop_assay", "viability"))
                     _d0 = st.session_state.loop_design or {}
                     _tr("design", "Designed an alamarBlue experiment",
                         detail=str(_d0.get("aim", ""))[:200],
@@ -2680,7 +2811,8 @@ with tab4:
                        "published ones.")
             try:
                 from co_scientist import experiment as _expp
-                _proto = _expp.protocol_for(d)
+                _pa = st.session_state.get("loop_assay", "viability")
+                _proto = _expp.protocol_for(d, assay=_pa)
                 _cm, _cs = st.columns([1, 2])
                 with _cm:
                     st.markdown("*Materials*")
@@ -2705,7 +2837,7 @@ with tab4:
                         st.markdown(f"- {_n3}")
                 st.download_button(
                     "Download the protocol for your lab notebook",
-                    _expp.protocol_text(d),
+                    _expp.protocol_text(d, assay=_pa),
                     file_name="alamarblue_protocol.txt", key="proto_dl",
                     use_container_width=True)
                 _tr("design", "Generated the bench protocol",
@@ -2740,45 +2872,11 @@ with tab4:
 
     # ---------- 3. Results & feedback ----------
     with r_tab:
-        st.markdown("Ran the assay? Drop the rig CSV here. Benchmate scores "
-                    "viability, audits it for artifacts, and files it as evidence.")
+        st.caption("Ran the experiment? Drop the CSV here. Benchmate reads "
+                   "it, audits it for artifacts, and works out what it does "
+                   "to your hypothesis.")
         _bench_assay_panel()
 
-        st.divider()
-        st.subheader("Feed it back. Sharpen the hypothesis")
-        on_record = assay.available_assays()
-        default_summary = ""
-        if on_record:
-            rec0 = assay.assay_evidence(on_record[-1])
-            if rec0:
-                default_summary = (f"{rec0['drug']} on {rec0['cell_line']}: "
-                                   f"{rec0['viability']['verdict']} "
-                                   f"({rec0['direction_for_benchmate']}).")
-        summary = st.text_area("Bench result summary", value=default_summary,
-                               height=80, key="loop_result_sum")
-        if not have_key:
-            st.info("Add your Anthropic API key to refine the hypothesis.")
-        if st.button("Refine the hypothesis from this result",
-                     disabled=not (have_key and summary.strip()), key="loop_refine_btn"):
-            from co_scientist import experiment as _exp
-            with st.spinner("Rethinking in light of the bench…"):
-                try:
-                    _tr("feedback", "Fed the bench result back to the agents")
-                    st.session_state.loop_refined = _exp.refine_hypothesis(
-                        st.session_state.loop_hyp, summary,
-                        design=st.session_state.get("loop_design"))
-                except Exception as ex:
-                    st.error(f"Refine failed: {ex}")
-        ref = st.session_state.get("loop_refined")
-        if ref:
-            st.markdown(f"**Verdict:** {ref.get('verdict', '')}")
-            st.markdown(f"**Revised hypothesis:** {ref.get('revised_hypothesis', '')}")
-            st.caption(ref.get("rationale", ""))
-            st.markdown(f"**Next experiment:** {ref.get('next_experiment', '')}")
-            if st.button("Use the revised hypothesis in Design", key="loop_use_refined"):
-                st.session_state["_pending_hyp"] = ref.get(
-                    "revised_hypothesis", st.session_state.loop_hyp)
-                st.rerun()
 
     # ---------- Reagent inventory ----------
     with inv_tab:
