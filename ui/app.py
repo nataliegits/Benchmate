@@ -319,7 +319,28 @@ def trace_panel() -> None:
             st.caption(f"`{_f}`")
             for _n2 in _files:
                 st.caption(_n2)
-            st.download_button("Download the run summary",
+            st.caption("The zip holds the PDF report, the raw trace, every "
+                       "Geneformer CSV, and the notebooks this run generated.")
+            if st.button("Package this run as a zip", key=f"tr_zip_{_show}",
+                         use_container_width=True):
+                try:
+                    from co_scientist import run_export as _rx
+                    with st.spinner("Bundling the run…"):
+                        st.session_state[f"_zip_{_show}"] = _rx.build_zip(
+                            _show,
+                            extra_dirs={"geneformer_csvs": CACHE_DIR,
+                                        "notebooks": REPO_ROOT / "notebooks"
+                                                     / "generated"})
+                except Exception as _ze:
+                    st.error(f"Couldn't build the zip: {_ze}")
+            _zb = st.session_state.get(f"_zip_{_show}")
+            if _zb:
+                st.download_button(
+                    f"Download benchmate_{_show}.zip ({len(_zb) / 1e6:.1f} MB)",
+                    _zb, file_name=f"benchmate_{_show}.zip",
+                    mime="application/zip", key=f"tr_zdl_{_show}",
+                    use_container_width=True)
+            st.download_button("Just the text summary",
                                _trace.summarise(_show),
                                file_name=f"benchmate_{_show}.txt",
                                key=f"tr_dl_{_show}", use_container_width=True)
@@ -2538,7 +2559,7 @@ with tab4:
         _ev_preview = ""
         try:
             from co_scientist import experiment as _exp0
-            _ev_preview = _exp0.project_evidence()
+            _ev_preview = _exp0.project_evidence(st.session_state.get("loop_hyp", ""))
         except Exception:
             pass
         if _ev_preview:
@@ -2553,7 +2574,7 @@ with tab4:
             from co_scientist import experiment as _exp
             with st.spinner("Designing the cleanest test…"):
                 try:
-                    ev = _exp.project_evidence()
+                    ev = _exp.project_evidence(st.session_state.loop_hyp)
                     st.session_state.loop_evidence = ev
                     st.session_state.loop_design = _exp.design_experiment(
                         st.session_state.loop_hyp, ev)
@@ -2646,6 +2667,54 @@ with tab4:
         needed = [x.strip() for x in needed_txt.split(",") if x.strip()]
         st.caption("alamarBlue, media, and plates are assumed on hand. This checks "
                    "the experimental compounds.")
+
+        # The protocol belongs next to the reagents: this is the tab you'd have
+        # open at the bench.
+        if d:
+            st.divider()
+            st.markdown("**Step-by-step protocol**")
+            st.caption("The standard alamarBlue method with your design's cell "
+                       "line, doses and controls filled in. The procedure is a "
+                       "fixed template rather than model-generated, so "
+                       "incubation times and dye concentrations are the "
+                       "published ones.")
+            try:
+                from co_scientist import experiment as _expp
+                _proto = _expp.protocol_for(d)
+                _cm, _cs = st.columns([1, 2])
+                with _cm:
+                    st.markdown("*Materials*")
+                    for _m in _proto["materials"]:
+                        st.markdown(f"- {_m}")
+                    st.markdown("*Timing*")
+                    for _t2 in _proto["timing"]:
+                        st.caption(_t2)
+                with _cs:
+                    st.markdown("*Procedure*")
+                    _sn = 0
+                    for _s2 in _proto["steps"]:
+                        if _s2.startswith("    "):
+                            st.markdown(
+                                f"&nbsp;&nbsp;&nbsp;&nbsp;{_s2.strip()}",
+                                unsafe_allow_html=True)
+                        else:
+                            _sn += 1
+                            st.markdown(f"**{_sn}.** {_s2}")
+                with st.expander("Before you start, read these"):
+                    for _n3 in _proto["notes"]:
+                        st.markdown(f"- {_n3}")
+                st.download_button(
+                    "Download the protocol for your lab notebook",
+                    _expp.protocol_text(d),
+                    file_name="alamarblue_protocol.txt", key="proto_dl",
+                    use_container_width=True)
+                _tr("design", "Generated the bench protocol",
+                    detail=f"{_sn} steps for {d.get('cell_line', 'the cell line')}")
+            except Exception as _e3:
+                st.caption(f"Couldn't build the protocol: {_e3}")
+        else:
+            st.caption("Design an experiment first and the protocol appears "
+                       "here, with its cell line and doses already filled in.")
         if hasattr(freezer, "reconcile"):
             rec = freezer.reconcile(needed, box)
         else:
@@ -2696,7 +2765,8 @@ with tab4:
                 try:
                     _tr("feedback", "Fed the bench result back to the agents")
                     st.session_state.loop_refined = _exp.refine_hypothesis(
-                        st.session_state.loop_hyp, summary)
+                        st.session_state.loop_hyp, summary,
+                        design=st.session_state.get("loop_design"))
                 except Exception as ex:
                     st.error(f"Refine failed: {ex}")
         ref = st.session_state.get("loop_refined")
