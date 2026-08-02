@@ -106,7 +106,30 @@ def record(run_id: str, step: str, headline: str, *, detail: str = "",
         ev = {"t": _now(), "step": step, "headline": headline,
               "detail": detail, "inputs": inputs or {},
               "outputs": outputs or {}, "files": saved}
-        with (d / "trace.jsonl").open("a") as fh:
+
+        # Streamlit re-executes the whole script on every interaction, so any
+        # record() sitting outside a button fires again on each rerun. Left
+        # alone that fills the panel with copies of the same event. Drop an
+        # event that's identical to the most recent one for its step: a genuine
+        # repeat (same step, same result) carries no new information anyway.
+        prev = None
+        f = d / "trace.jsonl"
+        if f.exists():
+            for line in reversed(f.read_text().splitlines()):
+                if not line.strip():
+                    continue
+                try:
+                    cand = json.loads(line)
+                except Exception:
+                    continue
+                if cand.get("step") == step:
+                    prev = cand
+                    break
+        if prev and all(prev.get(k) == ev.get(k)
+                        for k in ("headline", "detail", "inputs", "outputs")):
+            return
+
+        with f.open("a") as fh:
             fh.write(json.dumps(ev) + "\n")
     except Exception:
         pass          # observability must never break the run

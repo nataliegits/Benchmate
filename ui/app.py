@@ -323,7 +323,13 @@ def trace_panel() -> None:
 
 
 with st.sidebar:
-    trace_panel()
+    # Reserve the slot now, fill it at the very end of the script.
+    #
+    # Streamlit executes top to bottom, so rendering the trace here would show
+    # the state as of *before* the tabs ran: anything recorded while you worked
+    # would only appear on the next interaction, which reads as "it doesn't
+    # update". A container holds the position while deferring the content.
+    _trace_slot = st.container()
     st.divider()
     st.subheader("Anthropic API key")
     # CRITICAL: do NOT pre-populate this field from os.environ. Even with
@@ -364,6 +370,25 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Upload CSVs")
+    # What evidence is in hand, and what the current question still wants.
+    # Recorded here rather than in a tab, because this drag-and-drop IS the
+    # evidence step: the trace should say what arrived and what's missing.
+    try:
+        _have = sorted(available_geneformer_genes())
+        _want = [g.strip().upper()
+                 for g in str(st.session_state.get("genes_in", "")).split(",")
+                 if g.strip()]
+        _missing = [g for g in _want if g not in _have]
+        if _have or _want:
+            _tr("evidence",
+                f"{len(_have)} gene(s) of perturbation evidence on hand",
+                outputs={"have": ", ".join(_have) or "none",
+                         "still needed": ", ".join(_missing) or "none"})
+            if _missing:
+                st.caption("Still needed for your question: "
+                           + ", ".join(f"`{g}`" for g in _missing))
+    except Exception:
+        pass
     uploaded = st.file_uploader(
         "Drop *_stats.csv files here",
         type=["csv"],
@@ -626,6 +651,11 @@ with tab0:
         "What ERAD genes drive bortezomib resistance in multiple myeloma?",
     )
     question = st.text_area("Your research question", key="sh_question", height=90)
+    # Record the question as soon as it changes, so the trace opens with what
+    # you actually asked instead of staying blank until the first run.
+    if question.strip() and st.session_state.get("_tr_question") != question.strip():
+        st.session_state["_tr_question"] = question.strip()
+        _tr("question", "You asked", detail=question.strip())
 
     have_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     if not have_key:
@@ -890,9 +920,22 @@ with tab2:
                                  key=lambda h: h.get("elo", 0), reverse=True)
                     _tr("generate", f"{len(_hs)} hypotheses proposed",
                         detail=goal,
-                        outputs={"top": (_hs[0].get("statement", "")[:150]
-                                         if _hs else "-")},
+                        outputs={
+                            f"#{_i} ({round(_h.get('elo', 0))})":
+                                _h.get("statement", "")[:200]
+                            for _i, _h in enumerate(_hs[:5], 1)},
                         files=[str(REPO_ROOT / "state.json")])
+                    # the reasoning behind each one, so the trace explains the
+                    # ranking rather than just reporting it
+                    for _i, _h in enumerate(_hs[:3], 1):
+                        _tr("generate",
+                            f"#{_i} rationale and proposed experiment",
+                            detail=_h.get("statement", "")[:200],
+                            outputs={
+                                "why": (_h.get("rationale", "") or "")[:400],
+                                "experiment": (_h.get("experiment", "") or "")[:400],
+                                "reviewer notes": " | ".join(
+                                    _h.get("review_notes", []) or [])[:300]})
                     _tr("rank", "Elo tournament settled",
                         outputs={"leader": f"{round(_hs[0].get('elo', 0))}"
                                            if _hs else "-",
@@ -2575,10 +2618,6 @@ with tab4:
                    "the experimental compounds.")
         if hasattr(freezer, "reconcile"):
             rec = freezer.reconcile(needed, box)
-            _tr("reagents", f"Checked {len(needed)} reagent(s) against the freezer",
-                outputs={r["reagent"]: (f"found at {r['position']}"
-                                        if r["found"] else "not in this box")
-                         for r in rec})
         else:
             # A stale deploy may hold an older freezer module without reconcile();
             # fall back to locate() so the tab still works. Reboot to refresh.
@@ -2714,3 +2753,10 @@ with tab4:
 
     st.divider()
     benchmate_anchor("experiment", "*design an experiment for the top idea* · *where is kifunensine?* · *do I have everything?*")
+
+
+# ── Trace panel, rendered last so it reflects this run ──────
+# Filled into the container reserved at the top of the sidebar, so it appears
+# above the API key but contains everything recorded during this script run.
+with _trace_slot:
+    trace_panel()
