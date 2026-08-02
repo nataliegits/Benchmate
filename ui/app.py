@@ -255,6 +255,24 @@ def _tr(step: str, headline: str, **kw) -> None:
         pass
 
 
+def _reset_trace() -> None:
+    """Start genuinely fresh.
+
+    Clearing `run_id` alone was not enough, and produced the confusing
+    behaviour where a "fresh" run still showed the old one:
+
+    * `trace_pick` is a widget key, so the replay dropdown kept its previous
+      selection. On the next render `trace_replay_id` was recomputed from it
+      and the panel carried on showing the old run.
+    * The de-duplication sentinels (`_tr_question`, `_tr_evidence`) persisted,
+      so re-entering the same question or the same evidence recorded nothing
+      into the new run, leaving it looking empty or stale.
+    """
+    for k in ("run_id", "trace_replay_id", "trace_pick", "trace_step",
+              "_tr_question", "_tr_evidence"):
+        st.session_state.pop(k, None)
+
+
 def trace_panel() -> None:
     """The running record of this session, newest last.
 
@@ -315,10 +333,13 @@ def trace_panel() -> None:
         _pick = st.selectbox("Replay a run", ["(off)"] + _ids, key="trace_pick")
         st.session_state["trace_replay_id"] = (
             None if _pick == "(off)" else _pick)
+        if _pick != "(off)":
+            st.caption("Replay is on, so the panel above shows this past run, "
+                       "not what you're doing now. Set it to (off) to follow "
+                       "the live run.")
         if st.button("Start a fresh run", key="tr_new",
                      use_container_width=True):
-            st.session_state.pop("run_id", None)
-            st.session_state.pop("trace_replay_id", None)
+            _reset_trace()
             st.rerun()
 
 
@@ -379,14 +400,23 @@ with st.sidebar:
                  for g in str(st.session_state.get("genes_in", "")).split(",")
                  if g.strip()]
         _missing = [g for g in _want if g not in _have]
-        if _have or _want:
+
+        # Record only when the *cached evidence* changes, not when the wanted
+        # gene list does. `genes_in` gets rewritten as other tabs render, so
+        # keying on it logged a near-identical evidence entry two or three
+        # times per interaction. What arrived is the event; what's still
+        # missing is context that rides along with it.
+        _sig = ",".join(_have)
+        if (_have or _want) and st.session_state.get("_tr_evidence") != _sig:
+            st.session_state["_tr_evidence"] = _sig
             _tr("evidence",
                 f"{len(_have)} gene(s) of perturbation evidence on hand",
-                outputs={"have": ", ".join(_have) or "none",
-                         "still needed": ", ".join(_missing) or "none"})
-            if _missing:
-                st.caption("Still needed for your question: "
-                           + ", ".join(f"`{g}`" for g in _missing))
+                detail=("Still needed: " + ", ".join(_missing)) if _missing
+                       else "Everything the question asks for is cached.",
+                outputs={"have": ", ".join(_have) or "none"})
+        if _missing:
+            st.caption("Still needed for your question: "
+                       + ", ".join(f"`{g}`" for g in _missing))
     except Exception:
         pass
     uploaded = st.file_uploader(
