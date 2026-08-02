@@ -72,6 +72,11 @@ def _stale_modules() -> list[str]:
         "co_scientist.crosscheck": ["gene_missense_burden", "read_depmap",
                                     "model_status"],
         "co_scientist.hypothesis_scan": ["scan", "genes_in"],
+        "co_scientist.experiment": ["ASSAYS", "assay_capability",
+                                    "protocol_for", "protocol_text",
+                                    "project_evidence"],
+        "co_scientist.trace": ["record", "runs", "summarise", "STEP_LABEL"],
+        "co_scientist.run_export": ["build_zip", "build_pdf"],
     }
     missing = []
     for mod_name, attrs in required.items():
@@ -101,9 +106,13 @@ def _heal_stale_modules() -> list[str]:
     stale = _stale_modules()
     if not stale:
         return []
+    # Dependency order: things that are imported by others get reloaded first,
+    # so the later modules re-bind against fresh code.
     for name in ("co_scientist.target_scorer", "co_scientist.hypothesis_scan",
                  "co_scientist.assay", "co_scientist.freezer",
-                 "co_scientist.experiment", "co_scientist.crosscheck"):
+                 "co_scientist.trace", "co_scientist.experiment",
+                 "co_scientist.crosscheck", "co_scientist.run_export",
+                 "benchmark.live_scores"):
         try:
             mod = sys.modules.get(name)
             if mod is not None:
@@ -555,6 +564,22 @@ st.session_state.setdefault("preset_name", _PRESET_KEYS[0])
 st.session_state.setdefault("goal", DEFAULT_GOAL)
 st.session_state.setdefault("run_iterations", 8)
 st.session_state.setdefault("sh_plan", None)
+
+# Heal any module skew ONCE, before a tab can trip over it.
+#
+# This lived inside the Cross-check tab, which meant the Experiment tab still
+# blew up on a stale deploy: the guard only knew about the modules that tab
+# used. A single check at startup covers every tab, and every future attribute,
+# without me having to remember to extend it in the right place.
+_startup_skew = _heal_stale_modules()
+if _startup_skew:
+    st.error(
+        "This server is running older Benchmate modules than the interface "
+        "expects, so some tabs will not load.\n\n"
+        "**Fix:** on Streamlit Cloud open *Manage app* (lower right) and click "
+        "**Reboot app**. Locally, stop and restart `streamlit run`.\n\n"
+        + "\n".join(f"- `{s}`" for s in _startup_skew))
+    st.stop()
 
 tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1 · Start here",
@@ -1712,18 +1737,7 @@ with tab3:
     from co_scientist import target_scorer
     from benchmark import live_scores as _live
 
-    # Version skew shows up here first, because this tab uses the newest code.
-    # Heal it if we can; if not, say what to click instead of crashing with a
-    # redacted AttributeError.
-    _skew = _heal_stale_modules()
-    if _skew:
-        st.error(
-            "This server is running an older copy of Benchmate's modules than "
-            "the interface expects, so some models can't load.\n\n"
-            "**Fix:** on Streamlit Cloud, open *Manage app* (lower right) → "
-            "**Reboot app**. Locally, stop and restart `streamlit run`.\n\n"
-            + "\n".join(f"- `{s}`" for s in _skew))
-        st.stop()
+    # module skew is handled once at startup
 
     st.markdown("#### Score a hypothesis")
     st.caption("Pick a hypothesis, then run whichever models apply. Each box "
