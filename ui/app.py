@@ -853,18 +853,42 @@ with tab1:
         st.caption("Benchmate searches PubMed on its own during a run. Pin "
                    "papers here and they go into the same prompt, so a "
                    "hypothesis can lean on work you already trust.")
+        # Seed with keywords, not the whole question. PubMed ANDs every term,
+        # so pasting a sentence asks it for papers containing the word "what".
+        _seed = ", ".join(_lit.to_terms(
+            st.session_state.get("sh_question", ""))[:4])
         _lq = st.text_input(
-            "Search", key="lit_q",
-            value=st.session_state.get("sh_question", "")[:120],
-            placeholder="SEL1L ERAD bortezomib resistance myeloma")
+            "Keywords", key="lit_q", value=_seed.replace(", ", " "),
+            placeholder="SEL1L ERAD bortezomib myeloma",
+            help="Keywords work better than a sentence. Benchmate widens the "
+                 "search on its own if nothing comes back.")
         if st.button("Search PubMed", key="lit_go", disabled=not _lq.strip()):
             try:
                 with st.spinner("Searching PubMed…"):
-                    st.session_state["lit_hits"] = _lit.search(_lq, 8)
-                _tr("evidence", f"Searched PubMed for '{_lq[:60]}'",
-                    outputs={"results": len(st.session_state["lit_hits"])})
+                    _res = _lit.search(_lq, 8)
+                st.session_state["lit_hits"] = _res["papers"]
+                st.session_state["lit_used"] = _res
+                _tr("evidence", f"Searched PubMed: {_res['query']}",
+                    outputs={"results": len(_res["papers"])})
             except Exception as _le:
                 st.error(f"PubMed search failed: {_le}")
+
+        _used = st.session_state.get("lit_used")
+        if _used:
+            if _used["papers"]:
+                st.caption(f"Searched PubMed for `{_used['query']}` and found "
+                           f"{len(_used['papers'])}.")
+                if len(_used["tried"]) > 1:
+                    st.caption("Your first phrasing returned nothing, so it "
+                               "was widened: "
+                               + " then ".join(f"`{t}`"
+                                               for t in _used["tried"]))
+            else:
+                st.warning(
+                    "PubMed returned nothing for any of: "
+                    + ", ".join(f"`{t}`" for t in _used["tried"])
+                    + ". Try one gene plus one disease, for example "
+                      "`SEL1L myeloma`.")
 
         _pinned_ids = {r["pmid"] for r in _lit.load_pinned()}
         for _h in st.session_state.get("lit_hits", []):
