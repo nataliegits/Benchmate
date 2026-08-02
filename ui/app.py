@@ -77,6 +77,7 @@ def _stale_modules() -> list[str]:
                                     "project_evidence"],
         "co_scientist.trace": ["record", "runs", "summarise", "STEP_LABEL"],
         "co_scientist.run_export": ["build_zip", "build_pdf"],
+        "co_scientist.literature": ["to_terms", "search", "prompt_block"],
     }
     missing = []
     for mod_name, attrs in required.items():
@@ -91,28 +92,85 @@ def _stale_modules() -> list[str]:
     return missing
 
 
+_FIRST_PARTY_ORDER = (
+    "co_scientist.tools", "co_scientist.target_scorer",
+    "co_scientist.hypothesis_scan", "co_scientist.literature",
+    "co_scientist.assay", "co_scientist.audit", "co_scientist.freezer",
+    "co_scientist.trace", "co_scientist.pubchem", "co_scientist.boltz_scorer",
+    "co_scientist.experiment", "co_scientist.crosscheck",
+    "co_scientist.run_export", "benchmark.live_scores",
+)
+
+
+def _changed_on_disk() -> list[str]:
+    """First-party modules whose source file is newer than the loaded copy.
+
+    This replaces an attribute allow-list that had to be extended by hand every
+    time a module gained a function. It was extended three times and missed
+    three times, each one surfacing as a redacted AttributeError in whichever
+    tab happened to use the new code.
+
+    Watching file modification times catches the whole class of problem instead
+    of one instance of it. A fresh process is never stale, because it imported
+    the current files; skew only appears when a deploy updates files under a
+    process that keeps running, which is exactly what a newer mtime means.
+
+    The timestamps are stashed on the `co_scientist` package object, since that
+    survives in sys.modules across Streamlit reruns while anything defined in
+    this script does not.
+    """
+    import sys
+    from pathlib import Path
+    pkg = sys.modules.get("co_scientist")
+    if pkg is None:
+        return []
+    seen = getattr(pkg, "_bm_mtimes", None)
+    if seen is None:
+        seen = {}
+        setattr(pkg, "_bm_mtimes", seen)
+
+    changed = []
+    for name, mod in list(sys.modules.items()):
+        if not (name.startswith("co_scientist") or name.startswith("benchmark")):
+            continue
+        f = getattr(mod, "__file__", None)
+        if not f:
+            continue
+        try:
+            mtime = Path(f).stat().st_mtime
+        except OSError:
+            continue
+        if name in seen and mtime > seen[name]:
+            changed.append(name)
+        seen[name] = mtime
+    return changed
+
+
 def _heal_stale_modules() -> list[str]:
-    """Reload first-party modules when they're older than this UI.
+    """Reload first-party modules when the code on disk has moved on.
 
-    reload() mutates the existing module object in place, so anything holding a
-    reference (crosscheck holds target_scorer, for instance) picks up the new
-    attributes without re-importing. Order matters: dependencies first, then the
-    modules that read from them.
+    reload() mutates the module object in place, so anything holding a
+    reference (crosscheck holds target_scorer, for instance) sees the new
+    attributes without re-importing. Order matters: dependencies first, then
+    the modules that read from them.
 
-    Safe here because these modules expose functions and constants only: no
-    classes whose identity could split across a reload.
+    Safe here because these modules expose functions and constants only, with
+    no classes whose identity could split across a reload.
     """
     import importlib
+    changed = _changed_on_disk()
     stale = _stale_modules()
-    if not stale:
+    if not (changed or stale):
         return []
-    # Dependency order: things that are imported by others get reloaded first,
-    # so the later modules re-bind against fresh code.
-    for name in ("co_scientist.target_scorer", "co_scientist.hypothesis_scan",
-                 "co_scientist.assay", "co_scientist.freezer",
-                 "co_scientist.trace", "co_scientist.experiment",
-                 "co_scientist.crosscheck", "co_scientist.run_export",
-                 "benchmark.live_scores"):
+    # Reload everything first-party, not only the files that changed. A module
+    # that is itself unchanged can still hold a reference to one that moved, so
+    # reloading the whole set in dependency order is the only way to be sure
+    # they agree. This runs rarely, since it needs a file to have changed under
+    # a live process.
+    names = list(_FIRST_PARTY_ORDER)
+    for extra in sorted(set(changed) - set(names)):
+        names.append(extra)
+    for name in names:
         try:
             mod = sys.modules.get(name)
             if mod is not None:
