@@ -278,7 +278,7 @@ st.title("Benchmate")
 st.markdown(
     "<p style='color:#555555; font-size:1.05rem; margin-top:-8px; "
     "font-family: Inter, sans-serif;'>"
-    "An AI research scientist that works through the whole experiment with you."
+    "Your AI labmate: ask, hypothesize, experiment, iterate."
     "</p>",
     unsafe_allow_html=True,
 )
@@ -773,7 +773,7 @@ def _project_context() -> str:
 # ── Tab 0. Guided flow ──────────────────────────────────────
 with tab0:
     step_intro("takes your research question and lays out which genes to perturb, in which cells, and which models to check against. Then pre-fills the other tabs.", "1 of 5", "Add evidence")
-    st.header("Start here: from question to cross-checked hypotheses")
+    st.header("Start here: ask your research question")
     st.write(
         "Type a research question. Benchmate reads it and lays out the exact "
         "steps: which genes to perturb, in which cell type, and which models "
@@ -903,165 +903,175 @@ with tab1:
     # The agent already searches PubMed on its own seed queries. This gives you
     # a way to add the papers you know matter, and to see the kind of thing it
     # reads before it writes a single hypothesis.
-    st.header("What is already known")
-    with st.container(border=True):
+    st.header("Gather the evidence")
+    st.caption("Two sources, both feeding the same hypotheses. Papers on the "
+               "left, your own perturbation data on the right.")
+    _lit_col, _gene_col = st.columns(2, gap="large")
+
+    with _lit_col:
+        st.subheader("Search the literature")
         from co_scientist import literature as _lit
-
-        st.markdown("**Search PubMed**")
-        st.caption("Benchmate searches PubMed on its own during a run. Pin "
-                   "papers here and they go into the same prompt, so a "
-                   "hypothesis can lean on work you already trust.")
-        # Seed with keywords, not the whole question. PubMed ANDs every term,
-        # so pasting a sentence asks it for papers containing the word "what".
-        _seed = ", ".join(_lit.to_terms(
-            st.session_state.get("sh_question", ""))[:4])
-        _lq = st.text_input(
-            "Keywords", key="lit_q", value=_seed.replace(", ", " "),
-            placeholder="SEL1L ERAD bortezomib myeloma",
-            help="Keywords work better than a sentence. Benchmate widens the "
-                 "search on its own if nothing comes back.")
-        if st.button("Search PubMed", key="lit_go", disabled=not _lq.strip()):
-            try:
-                with st.spinner("Searching PubMed…"):
-                    _res = _lit.search(_lq, 8)
-                st.session_state["lit_hits"] = _res["papers"]
-                st.session_state["lit_used"] = _res
-                _tr("evidence", f"Searched PubMed: {_res['query']}",
-                    outputs={"results": len(_res["papers"])})
-            except Exception as _le:
-                st.error(f"PubMed search failed: {_le}")
-
-        _used = st.session_state.get("lit_used")
-        if _used:
-            if _used["papers"]:
-                st.caption(f"Searched PubMed for `{_used['query']}` and found "
-                           f"{len(_used['papers'])}.")
-                if len(_used["tried"]) > 1:
-                    st.caption("Your first phrasing returned nothing, so it "
-                               "was widened: "
-                               + " then ".join(f"`{t}`"
-                                               for t in _used["tried"]))
-            else:
-                st.warning(
-                    "PubMed returned nothing for any of: "
-                    + ", ".join(f"`{t}`" for t in _used["tried"])
-                    + ". Try one gene plus one disease, for example "
-                      "`SEL1L myeloma`.")
-
-        _pinned_ids = {r["pmid"] for r in _lit.load_pinned()}
-        for _h in st.session_state.get("lit_hits", []):
-            _c1, _c2 = st.columns([6, 1])
-            with _c1:
-                st.markdown(f"[{_h['title']}]({_h['url']})")
-                st.caption(f"PMID {_h['pmid']}  ·  "
-                           f"{(_h['abstract'] or 'No abstract.')[:190]}...")
-            with _c2:
-                if _h["pmid"] in _pinned_ids:
-                    st.caption("pinned")
-                elif st.button("Pin", key=f"pin_{_h['pmid']}"):
-                    _lit.pin(_h)
-                    _tr("evidence", "Pinned a paper",
-                        detail=_h["title"][:150],
-                        outputs={"pmid": _h["pmid"]})
-                    st.rerun()
-
-        _pins = _lit.load_pinned()
-        if _pins:
-            st.divider()
-            st.markdown(f"**Pinned, and going into the next run ({len(_pins)})**")
-            for _r in _pins:
-                _pc1, _pc2 = st.columns([6, 1])
-                _pc1.markdown(
-                    f"[{_r['title'][:110]}](https://pubmed.ncbi.nlm.nih.gov/"
-                    f"{_r['pmid']}/)")
-                if _pc2.button("Remove", key=f"unpin_{_r['pmid']}"):
-                    _lit.unpin(_r["pmid"])
-                    st.rerun()
-        else:
-            st.caption("Nothing pinned. The agent will still run its own "
-                       "search when you generate hypotheses.")
-
-    st.divider()
-    st.header("Add genes to the perturbation cache")
-    st.write(
-        "Enter the gene symbols you want to perturb and pick the cell "
-        "context. Benchmate generates a Colab notebook with both pre-filled."
-    )
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        genes_in = st.text_input(
-            "Gene symbols (comma-separated)",
-            placeholder="e.g. XBP1, ATF4, EIF2AK3",
-            key="genes_in",
-        )
-    with col2:
-        preset_name = st.selectbox(
-            "Cell context",
-            _PRESET_KEYS,
-            key="preset_name",
-            help="The cells Geneformer will perturb your genes in. "
-                 "Pick where your genes' biology should be readable.",
-        )
-    if st.session_state.get("sh_plan"):
-        st.caption("Tip: the Start here tab can fill these in from a question.")
-    st.caption(CELL_TYPE_PRESETS[preset_name]["rationale"])
-
-    if st.button("Generate Colab notebook", type="primary"):
-        if not genes_in.strip():
-            st.error("Enter at least one gene symbol.")
-        else:
-            symbols = [g.strip().upper() for g in genes_in.split(",") if g.strip()]
-            with st.spinner("Resolving Ensembl IDs..."):
+        st.caption(
+            "Abstracts from [PubMed](https://pubmed.ncbi.nlm.nih.gov/), the index "
+            "of biomedical papers. Benchmate searches it on its own during a run. "
+            "Pin papers here and they go into the same prompt.")
+        with st.container():
+            # Seed with keywords, not the whole question. PubMed ANDs every term,
+            # so pasting a sentence asks it for papers containing the word "what".
+            _seed = ", ".join(_lit.to_terms(
+                st.session_state.get("sh_question", ""))[:4])
+            _lq = st.text_input(
+                "Keywords", key="lit_q", value=_seed.replace(", ", " "),
+                placeholder="SEL1L ERAD bortezomib myeloma",
+                help="Keywords work better than a sentence. Benchmate widens the "
+                     "search on its own if nothing comes back.")
+            if st.button("Search PubMed", key="lit_go", disabled=not _lq.strip()):
                 try:
-                    resolved = resolve_to_ensembl(symbols)
-                except Exception as e:
-                    st.error(f"mygene lookup failed: {e}")
-                    st.stop()
-            unresolved = [s for s in symbols if s not in resolved]
-            if unresolved:
-                st.warning(f"Could not resolve: {', '.join(unresolved)}")
-            if not resolved:
-                st.error("No symbols resolved. Check spelling.")
-                st.stop()
+                    with st.spinner("Searching PubMed…"):
+                        _res = _lit.search(_lq, 8)
+                    st.session_state["lit_hits"] = _res["papers"]
+                    st.session_state["lit_used"] = _res
+                    _tr("evidence", f"Searched PubMed: {_res['query']}",
+                        outputs={"results": len(_res["papers"])})
+                except Exception as _le:
+                    st.error(f"PubMed search failed: {_le}")
 
-            st.success(f"Resolved {len(resolved)} gene(s) for context: {preset_name}")
-            st.json(resolved)
+            _used = st.session_state.get("lit_used")
+            if _used:
+                if _used["papers"]:
+                    st.caption(f"Searched PubMed for `{_used['query']}` and found "
+                               f"{len(_used['papers'])}.")
+                    if len(_used["tried"]) > 1:
+                        st.caption("Your first phrasing returned nothing, so it "
+                                   "was widened: "
+                                   + " then ".join(f"`{t}`"
+                                                   for t in _used["tried"]))
+                else:
+                    st.warning(
+                        "PubMed returned nothing for any of: "
+                        + ", ".join(f"`{t}`" for t in _used["tried"])
+                        + ". Try one gene plus one disease, for example "
+                          "`SEL1L myeloma`.")
 
-            with st.spinner("Generating notebook..."):
-                nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
-            st.write(f"Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
+            _pinned_ids = {r["pmid"] for r in _lit.load_pinned()}
+            for _h in st.session_state.get("lit_hits", []):
+                _c1, _c2 = st.columns([6, 1])
+                with _c1:
+                    st.markdown(f"[{_h['title']}]({_h['url']})")
+                    st.caption(f"PMID {_h['pmid']}  ·  "
+                               f"{(_h['abstract'] or 'No abstract.')[:190]}...")
+                with _c2:
+                    if _h["pmid"] in _pinned_ids:
+                        st.caption("pinned")
+                    elif st.button("Pin", key=f"pin_{_h['pmid']}"):
+                        _lit.pin(_h)
+                        _tr("evidence", "Pinned a paper",
+                            detail=_h["title"][:150],
+                            outputs={"pmid": _h["pmid"]})
+                        st.rerun()
 
-            if gh_available():
-                with st.spinner("Pushing to Gist..."):
-                    try:
-                        urls = handoff(nb_path, description=f"Benchmate: {', '.join(resolved)}")
-                    except Exception as e:
-                        urls = None
-                        st.warning(f"Gist push failed: {e}. Falling back to download.")
-                if urls:
-                    st.markdown(f"### [Open in Colab]({urls['colab_url']})")
-                    st.caption(f"Gist: {urls['gist_url']}")
+            _pins = _lit.load_pinned()
+            if _pins:
+                st.divider()
+                st.markdown(f"**Pinned, and going into the next run ({len(_pins)})**")
+                for _r in _pins:
+                    _pc1, _pc2 = st.columns([6, 1])
+                    _pc1.markdown(
+                        f"[{_r['title'][:110]}](https://pubmed.ncbi.nlm.nih.gov/"
+                        f"{_r['pmid']}/)")
+                    if _pc2.button("Remove", key=f"unpin_{_r['pmid']}"):
+                        _lit.unpin(_r["pmid"])
+                        st.rerun()
             else:
-                st.info(
-                    "GitHub CLI not available. Download the notebook below, "
-                    "open colab.research.google.com, and use "
-                    "File → Upload notebook to load it."
-                )
-                st.download_button(
-                    "Download notebook",
-                    nb_path.read_bytes(),
-                    file_name=nb_path.name,
-                    mime="application/x-ipynb+json",
-                )
+                st.caption("Nothing pinned. The agent will still run its own "
+                           "search when you generate hypotheses.")
 
-            st.divider()
-            st.info(
-                "In Colab: Runtime → Change runtime type → T4 GPU, then "
-                "Runtime → Run all. When the notebook finishes, the final "
-                "cell auto-downloads each *_stats.csv to your browser. "
-                "Drag those files into the Upload CSVs panel in the sidebar."
+        st.divider()
+
+    with _gene_col:
+        st.subheader("Search Geneformer")
+        st.caption(
+            "[Geneformer](https://huggingface.co/ctheodoris/Geneformer) is a "
+            "transformer trained on 30 million single cells. Delete a gene "
+            "in silico and it predicts which other genes shift, which is "
+            "perturbation data: evidence about your gene without running the "
+            "knockout. Pick genes and a cell context, and Benchmate writes the "
+            "Colab notebook.")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            genes_in = st.text_input(
+                "Gene symbols (comma-separated)",
+                placeholder="e.g. XBP1, ATF4, EIF2AK3",
+                key="genes_in",
             )
+        with col2:
+            preset_name = st.selectbox(
+                "Cell context",
+                _PRESET_KEYS,
+                key="preset_name",
+                help="The cells Geneformer will perturb your genes in. "
+                     "Pick where your genes' biology should be readable.",
+            )
+        if st.session_state.get("sh_plan"):
+            st.caption("Tip: the Start here tab can fill these in from a question.")
+        st.caption(CELL_TYPE_PRESETS[preset_name]["rationale"])
+
+        if st.button("Generate Colab notebook", type="primary"):
+            if not genes_in.strip():
+                st.error("Enter at least one gene symbol.")
+            else:
+                symbols = [g.strip().upper() for g in genes_in.split(",") if g.strip()]
+                with st.spinner("Resolving Ensembl IDs..."):
+                    try:
+                        resolved = resolve_to_ensembl(symbols)
+                    except Exception as e:
+                        st.error(f"mygene lookup failed: {e}")
+                        st.stop()
+                unresolved = [s for s in symbols if s not in resolved]
+                if unresolved:
+                    st.warning(f"Could not resolve: {', '.join(unresolved)}")
+                if not resolved:
+                    st.error("No symbols resolved. Check spelling.")
+                    st.stop()
+
+                st.success(f"Resolved {len(resolved)} gene(s) for context: {preset_name}")
+                st.json(resolved)
+
+                with st.spinner("Generating notebook..."):
+                    nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
+                st.write(f"Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
+
+                if gh_available():
+                    with st.spinner("Pushing to Gist..."):
+                        try:
+                            urls = handoff(nb_path, description=f"Benchmate: {', '.join(resolved)}")
+                        except Exception as e:
+                            urls = None
+                            st.warning(f"Gist push failed: {e}. Falling back to download.")
+                    if urls:
+                        st.markdown(f"### [Open in Colab]({urls['colab_url']})")
+                        st.caption(f"Gist: {urls['gist_url']}")
+                else:
+                    st.info(
+                        "GitHub CLI not available. Download the notebook below, "
+                        "open colab.research.google.com, and use "
+                        "File → Upload notebook to load it."
+                    )
+                    st.download_button(
+                        "Download notebook",
+                        nb_path.read_bytes(),
+                        file_name=nb_path.name,
+                        mime="application/x-ipynb+json",
+                    )
+
+                st.divider()
+                st.info(
+                    "In Colab: Runtime → Change runtime type → T4 GPU, then "
+                    "Runtime → Run all. When the notebook finishes, the final "
+                    "cell auto-downloads each *_stats.csv to your browser. "
+                    "Drag those files into the Upload CSVs panel in the sidebar."
+                )
 
     st.divider()
     benchmate_anchor("evidence", "*what perturbation data do I have?* · *what else should I gather?*")
@@ -1069,7 +1079,13 @@ with tab1:
 # ── Tab 2. Run Benchmate ────────────────────────────────────
 with tab2:
     step_intro("seven agents propose hypotheses and argue; an Elo tournament ranks them, so you get a shortlist instead of a wall of text.", "3 of 5", "Cross-check")
-    st.header("Run the Co-Scientist loop")
+    st.header("Run the hypothesis loop")
+    st.caption(
+        "Seven agents share the work: one proposes, one reviews like a "
+        "critic, one runs the Elo tournament, one catches duplicate ideas, "
+        "one rewrites the winners, one feeds the critique back, and a "
+        "supervisor decides who goes next. Each role can run on a different "
+        "model, set under Model routing in the sidebar.")
     goal = st.text_area(
         "Research goal",
         height=140,
