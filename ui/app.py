@@ -341,32 +341,65 @@ def _reset_trace() -> None:
 
 
 def trace_panel() -> None:
-    """The running record of this session, newest last.
+    """The running record of this session.
 
-    Lives in the sidebar so it's visible from every tab: the point is that you
-    can watch the reasoning accumulate while you work, rather than reconstruct
-    it afterwards from whatever the final screen happens to show.
+    Sits in the sidebar so it is reachable from every tab. The step list is
+    collapsed by default: watching it grow is the point during a demo, and
+    clutter the rest of the time. What stays visible is the export, because
+    walking away with the run is the reason any of this gets recorded.
     """
-    st.subheader("This run")
     _ids = [r["run_id"] for r in _trace.runs()]
     _cur = st.session_state.get("run_id")
-
     _replay = st.session_state.get("trace_replay_id")
     _show = _replay or _cur
+
     if not _show:
+        st.subheader("This run")
         st.caption("Nothing recorded yet. Ask a question in **Start here** and "
                    "the record builds itself as you go.")
-    else:
-        _evs = _trace.read(_show)
+        return
+
+    _all = _trace.read(_show)
+    _f = _trace.folder(_show)
+    _files = sorted(p.name for p in (_f / "files").glob("*")) \
+        if (_f / "files").exists() else []
+
+    st.subheader("This run")
+    st.caption(f"{len(_all)} step(s), {len(_files)} file(s)"
+               + (f" · replaying `{_replay}`" if _replay else ""))
+
+    # ---- export, kept in front of you --------------------------------------
+    if st.button("Export this run", type="primary", key=f"tr_zip_{_show}",
+                 use_container_width=True,
+                 help="A zip holding the PDF report, the raw trace, your "
+                      "Geneformer CSVs, and every notebook this run wrote."):
+        try:
+            from co_scientist import run_export as _rx
+            with st.spinner("Bundling the run…"):
+                st.session_state[f"_zip_{_show}"] = _rx.build_zip(
+                    _show, extra_dirs={
+                        "geneformer_csvs": CACHE_DIR,
+                        "notebooks": REPO_ROOT / "notebooks" / "generated"})
+        except Exception as _ze:
+            st.error(f"Couldn't build the zip: {_ze}")
+
+    _zb = st.session_state.get(f"_zip_{_show}")
+    if _zb:
+        st.download_button(
+            f"Download the zip ({len(_zb) / 1e6:.1f} MB)", _zb,
+            file_name=f"benchmate_{_show}.zip", mime="application/zip",
+            key=f"tr_zdl_{_show}", use_container_width=True, type="primary")
+        st.caption("Contains report.pdf, summary.txt, trace.jsonl, and files/.")
+
+    # ---- the steps, folded away by default ---------------------------------
+    with st.expander(f"Steps ({len(_all)})", expanded=bool(_replay)):
+        _evs = _all
         if _replay:
-            # Demo mode: step through a finished run at your own pace, so a
-            # recorded walkthrough has repeatable timing and no live latency.
-            _n = st.slider("Replay step", 1, max(len(_evs), 1),
-                           min(len(_evs), st.session_state.get("trace_step", 1)),
+            _n = st.slider("Replay step", 1, max(len(_all), 1),
+                           min(len(_all), st.session_state.get("trace_step", 1)),
                            key="trace_step")
-            _evs = _evs[:_n]
-            st.caption(f"Replaying `{_replay}`, step {_n} of "
-                       f"{len(_trace.read(_replay))}.")
+            _evs = _all[:_n]
+            st.caption(f"Step {_n} of {len(_all)}.")
         if not _evs:
             st.caption("Recording. Nothing has happened yet.")
         for _e in _evs:
@@ -377,40 +410,17 @@ def trace_panel() -> None:
                 st.caption(_e["detail"][:280])
             for _k, _v in (_e.get("outputs") or {}).items():
                 st.caption(f"{_k}: {_v}")
+            if _e.get("files"):
+                st.caption("saved: " + ", ".join(_e["files"]))
             st.divider()
 
-        _f = _trace.folder(_show)
-        _files = sorted(p.name for p in (_f / "files").glob("*")) \
-            if (_f / "files").exists() else []
-        with st.expander(f"Run folder ({len(_files)} file(s))"):
-            st.caption(f"`{_f}`")
-            for _n2 in _files:
-                st.caption(_n2)
-            st.caption("The zip holds the PDF report, the raw trace, every "
-                       "Geneformer CSV, and the notebooks this run generated.")
-            if st.button("Package this run as a zip", key=f"tr_zip_{_show}",
-                         use_container_width=True):
-                try:
-                    from co_scientist import run_export as _rx
-                    with st.spinner("Bundling the run…"):
-                        st.session_state[f"_zip_{_show}"] = _rx.build_zip(
-                            _show,
-                            extra_dirs={"geneformer_csvs": CACHE_DIR,
-                                        "notebooks": REPO_ROOT / "notebooks"
-                                                     / "generated"})
-                except Exception as _ze:
-                    st.error(f"Couldn't build the zip: {_ze}")
-            _zb = st.session_state.get(f"_zip_{_show}")
-            if _zb:
-                st.download_button(
-                    f"Download benchmate_{_show}.zip ({len(_zb) / 1e6:.1f} MB)",
-                    _zb, file_name=f"benchmate_{_show}.zip",
-                    mime="application/zip", key=f"tr_zdl_{_show}",
-                    use_container_width=True)
-            st.download_button("Just the text summary",
-                               _trace.summarise(_show),
-                               file_name=f"benchmate_{_show}.txt",
-                               key=f"tr_dl_{_show}", use_container_width=True)
+    with st.expander(f"Files ({len(_files)})"):
+        st.caption(f"`{_f}`")
+        for _n2 in _files:
+            st.caption(_n2)
+        st.download_button("Text summary only", _trace.summarise(_show),
+                           file_name=f"benchmate_{_show}.txt",
+                           key=f"tr_dl_{_show}", use_container_width=True)
 
     with st.expander("Past runs"):
         if not _ids:
@@ -422,9 +432,9 @@ def trace_panel() -> None:
         st.session_state["trace_replay_id"] = (
             None if _pick == "(off)" else _pick)
         if _pick != "(off)":
-            st.caption("Replay is on, so the panel above shows this past run, "
-                       "not what you're doing now. Set it to (off) to follow "
-                       "the live run.")
+            st.caption("Replay is on, so the panel above shows this past run "
+                       "instead of what you are doing now. Set it to (off) to "
+                       "follow the live run.")
         if st.button("Start a fresh run", key="tr_new",
                      use_container_width=True):
             _reset_trace()
@@ -915,6 +925,18 @@ with tab1:
             "Abstracts from [PubMed](https://pubmed.ncbi.nlm.nih.gov/), the index "
             "of biomedical papers. Benchmate searches it on its own during a run. "
             "Pin papers here and they go into the same prompt.")
+        with st.expander("What does pinning do?"):
+            st.markdown(
+                "A pinned paper's title and abstract are written into the "
+                "prompt the **Generation** agent sees, alongside the papers it "
+                "found on its own. The prompt asks it to cite the PMID when a "
+                "hypothesis leans on one, so you can trace a claim back to a "
+                "source.\n\n"
+                "Pinning adds to the agent's search rather than replacing it. "
+                "Up to 8 papers go in, because abstracts are long and the "
+                "context window is shared with your perturbation data.\n\n"
+                "It shapes which hypotheses get written. It does not touch the "
+                "Elo tournament, so a pinned paper cannot promote a weak idea.")
         with st.container():
             # Seed with keywords, not the whole question. PubMed ANDs every term,
             # so pasting a sentence asks it for papers containing the word "what".
@@ -1041,6 +1063,11 @@ with tab1:
                 with st.spinner("Generating notebook..."):
                     nb_path, _ = generate_notebook(resolved.keys(), preset_name=preset_name)
                 st.write(f"Notebook saved: `{nb_path.relative_to(REPO_ROOT)}`")
+                _tr("notebook", "Wrote a Geneformer perturbation notebook",
+                    detail=f"{', '.join(resolved)} in {preset_name}",
+                    outputs={"genes": ", ".join(
+                        f"{k} ({v})" for k, v in resolved.items())},
+                    files=[str(nb_path)])
 
                 if gh_available():
                     with st.spinner("Pushing to Gist..."):
