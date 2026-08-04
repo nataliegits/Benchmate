@@ -432,9 +432,13 @@ def _build_install_cell() -> list[str]:
         "                    '--no-cache-dir', '--no-deps',\n",
         "                    'git+https://huggingface.co/ctheodoris/Geneformer'],\n",
         "                   check=False)\n",
-        "    print('Installed. RESTARTING the runtime for a clean import state —')\n",
+        "    print('Installed. RESTARTING the runtime for a clean import state.')\n",
         "    print('Colab will say the session crashed. That is expected.')\n",
-        "    print('When it returns, skip this cell and run the next one.')\n",
+        "    print('')\n",
+        "    print('The restart clears every variable, including your output')\n",
+        "    print('paths. When it comes back, re-run the Drive mount cell')\n",
+        "    print('above, then carry on below. Later cells rebuild the paths')\n",
+        "    print('themselves if you forget.')\n",
         "    import IPython\n",
         "    IPython.Application.instance().kernel.do_shutdown(True)\n",
     ]
@@ -770,6 +774,7 @@ def _despecialise(nb: dict, targets: dict, preset_name: str, preset: dict) -> No
     ]
 
     _make_resumable(nb)
+    _add_out_recovery(nb)
 
     # Renumber the export heading so it follows the last real section.
     nums = [int(mm.group(1)) for c in nb["cells"]
@@ -824,6 +829,64 @@ _RESUMABLE_LOOP = [
     "    print(f\"\\nPerturbing {sym} ({eid})...\")\n",
     "    run_perturbation(sym, eid)\n",
 ]
+
+
+
+def _out_recovery(out_literal: str) -> list[str]:
+    """A guard that rebuilds OUT and RAW_PATH after a runtime restart.
+
+    The install cell restarts the runtime on purpose, which clears every
+    variable including OUT from the Drive-mount cell. Its own message then said
+    to carry on with the next cell, so people skipped the mount and hit
+    `NameError: name 'OUT' is not defined` several cells later, after waiting
+    through a Census download.
+    """
+    return [
+        "# Resumable: Colab clears every variable when the runtime restarts,\n",
+        "# which the install cell does on purpose. Rebuild the paths from Drive\n",
+        "# instead of failing with NameError.\n",
+        "try:\n",
+        "    OUT\n",
+        "except NameError:\n",
+        "    import os\n",
+        "    from google.colab import drive\n",
+        "    drive.mount('/content/drive')\n",
+        f"    OUT = {out_literal!r}\n",
+        "    os.makedirs(OUT, exist_ok=True)\n",
+        "    print('recovered OUT =', OUT)\n",
+        "try:\n",
+        "    RAW_PATH\n",
+        "except NameError:\n",
+        "    RAW_PATH = f'{OUT}/cells_raw.h5ad'\n",
+        "\n",
+    ]
+
+
+def _add_out_recovery(nb: dict) -> None:
+    """Prepend the OUT guard to every cell that reads OUT without setting it."""
+    import re as _re
+    lit = None
+    for cell in nb["cells"]:
+        src = "".join(cell.get("source", []))
+        m = _re.search(r'^OUT\s*=\s*"([^"]+)"', src, _re.M)
+        if m:
+            lit = m.group(1)
+            break
+    if not lit:
+        return
+    guard = _out_recovery(lit)
+    for cell in nb["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        src = "".join(cell.get("source", []))
+        if "recovered OUT" in src:
+            continue
+        reads = ("OUT" in src) or ("RAW_PATH" in src)
+        sets = _re.search(r'^OUT\s*=', src, _re.M) is not None
+        if reads and not sets:
+            cell["source"] = guard + list(cell.get("source", []))
+            cell["outputs"] = []
+            cell["execution_count"] = None
 
 
 def _make_resumable(nb: dict) -> None:
@@ -1023,6 +1086,12 @@ def generate_notebook(symbols: Iterable[str],
         "outputs": [],
         "source": _build_download_cell(list(targets.keys())),
     })
+
+    # Run the OUT guard again now that the export cell has been appended:
+    # _despecialise ran before it existed, so it would otherwise be the one
+    # cell left able to raise NameError after a restart. Idempotent, it skips
+    # anything already guarded.
+    _add_out_recovery(nb)
 
     _clear_outputs(nb)
     _validate_syntax(nb)
