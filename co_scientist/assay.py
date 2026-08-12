@@ -487,6 +487,11 @@ def ingest_plate(csv_path, *, hypothesis: str, drug: str, cell: str,
     rec["headline_condition"] = headline
     rec["control"] = res["control"]
     rec["control_delta"] = res["control_delta"]
+    # Carry the blank through, so the record shows whether the plate had one
+    # and what was subtracted. Without this the correction happens silently and
+    # nothing downstream can report that it did.
+    rec["blank_delta"] = res.get("blank_delta")
+    rec["blanks"] = res.get("blanks", [])
     rec["conditions"] = {
         c: {"delta": s["metrics"]["delta"],
             "t_half_s": s["metrics"].get("t_half_s"),
