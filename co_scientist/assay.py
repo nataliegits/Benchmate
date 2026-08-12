@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import re
 import json
 from pathlib import Path
@@ -156,7 +157,17 @@ def evidence_record(m: dict, call: dict, *, hypothesis: str, drug: str,
 
 def summarize(rec: dict) -> str:
     """One-paragraph evidence string for an agent prompt (mirrors the
-    Geneformer context block)."""
+    Geneformer context block).
+
+    A whole-plate record is delegated to `summarize_plate`. This function only
+    describes the headline arm, so calling it on a 72-condition plate handed the
+    agents one combination and no comparator, and they correctly replied that no
+    IC50 ratio could be computed and no cell-line comparison was possible. The
+    plate was fine; the summary was one line of it. Routing here means any caller
+    that forgets which summariser to use still gets the whole plate.
+    """
+    if rec.get("assay") == "viability-plate" or "conditions" in rec:
+        return summarize_plate(rec)
     m = rec["metrics"]
     return (
         f"BENCH ASSAY EVIDENCE — {rec['source']}.\n"
@@ -508,6 +519,93 @@ def ingest_plate(csv_path, *, hypothesis: str, drug: str, cell: str,
     return rec
 
 
+def _cell_line_prefixes(conds) -> list[str]:
+    """Cell-line prefixes, read off the vehicle labels.
+
+    Cannot be done by splitting on the first drug token, because a line called
+    "RPMI-8226/BTZ" contains a drug name. The vehicle labels give it away.
+    """
+    out: list[str] = []
+    for c in conds:
+        low = c.lower()
+        for needle in ("vehicle", "untreated", "no drug"):
+            i = low.find(needle)
+            if i > 0:
+                p = c[:i].strip()
+                if p and p not in out:
+                    out.append(p)
+                break
+    return out
+
+
+def _dose_in_nM(text: str) -> float | None:
+    d = _dose_set(text)
+    return min(d) if d else None
+
+
+def _dose_response_block(rec: dict) -> list[str]:
+    """Dose-response series and IC50s, grouped so the agent does not have to
+    reconstruct them.
+
+    The per-condition list is sorted by viability, which is right for spotting
+    the strongest arm and useless for reading a dose-response. Given only that,
+    the agents kept replying that no IC50 could be calculated and no cell-line
+    comparison was possible, because assembling one from a viability-sorted list
+    of 72 labels is not something a prompt should be asked to do.
+    """
+    conds = rec.get("conditions") or {}
+    prefixes = sorted(_cell_line_prefixes(conds), key=len, reverse=True)
+    if not prefixes:
+        return []
+
+    # (cell line, co-treatment) -> {dose_nM: viability}
+    series: dict[tuple[str, str], dict[float, float]] = {}
+    for cond, s in conds.items():
+        v = s.get("viability_pct")
+        if v is None:
+            continue
+        line = next((p for p in prefixes if cond.startswith(p)), None)
+        if line is None:
+            continue
+        rest = cond[len(line):].strip()
+        dose, others = 0.0, []
+        for part in (p.strip() for p in rest.split("+")):
+            if not part or "vehicle" in part.lower():
+                continue
+            if "bortezomib" in _drugs_in(part):
+                dose = _dose_in_nM(part) or 0.0
+            else:
+                others.append(part)
+        arm = " + ".join(others) if others else "no co-treatment"
+        series.setdefault((line, arm), {})[dose] = v
+
+    out = ["", "Bortezomib dose-response, by cell line and co-treatment.",
+           "Viability as % of that cell line's own vehicle. IC50 by log-linear "
+           "interpolation, reported only where the curve crosses 50%."]
+    for (line, arm), pts in sorted(series.items()):
+        if len(pts) < 3:
+            continue
+        doses = sorted(pts)
+        shown = ", ".join(f"{d:g} nM {pts[d]:.0f}%" for d in doses)
+        ic = None
+        for d1, d2 in zip(doses, doses[1:]):
+            v1, v2 = pts[d1], pts[d2]
+            if v1 >= 50 >= v2 and d1 > 0:
+                f = (v1 - 50) / (v1 - v2)
+                ic = 10 ** (math.log10(d1) + f * (math.log10(d2) - math.log10(d1)))
+                break
+        tag = (f"IC50 {ic:.1f} nM" if ic
+               else f"IC50 not reached, above {max(doses):g} nM")
+        out.append(f"  {line}, {arm}: {shown}  ->  {tag}")
+
+    out.append("")
+    out.append("Fold-shifts follow from the IC50s above: divide the "
+               "no-co-treatment IC50 for a line by the IC50 with the "
+               "co-treatment. A shift present in one line and absent in the "
+               "other is a selectivity result.")
+    return out
+
+
 def summarize_plate(rec: dict) -> str:
     """The prompt block the feedback step reads for a whole plate."""
     lines = [
@@ -516,8 +614,15 @@ def summarize_plate(rec: dict) -> str:
         f"Vehicle control: {rec.get('control')} "
         f"(delta {rec.get('control_delta')}).",
         f"Verdict on the tested arm: {rec['viability']['verdict']}.",
-        rec["interpretation"], "",
-        "Every condition on the plate, viability as % of the vehicle control:",
+        rec["interpretation"],
+    ]
+    if rec.get("blank_delta") is not None:
+        lines.append(f"Blank (no cells) delta {rec['blank_delta']}, subtracted "
+                     f"from every condition before normalising.")
+    lines += _dose_response_block(rec)
+    lines += [
+        "", "Every condition on the plate, viability as % of the vehicle "
+        "control:",
     ]
     rows = sorted(rec["conditions"].items(),
                   key=lambda kv: (kv[1]["viability_pct"] is None,
