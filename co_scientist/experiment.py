@@ -283,14 +283,35 @@ def refine_hypothesis(hypothesis: str, result_summary: str,
         f"Original hypothesis:\n{hypothesis}\n\n"
         f"{ctx}"
         f"Bench result from the alamarBlue assay:\n{result_summary}\n\n"
+        # The prompt used to say "runnable on the same viability rig" without
+        # ever saying what the rig is, so the model proposed plate-reader
+        # protocols: a single endpoint after a 4 h incubation, for instance.
+        # This rig logs the red/blue ratio continuously, and the whole reason
+        # viability is computed as a delta is that each well starts at its own
+        # offset. A single endpoint throws away the kinetics and puts that
+        # offset back into the number.
+        f"WHAT THE INSTRUMENT IS:\n{RIG_CAPABILITY}\n\n"
+        "The rig logs continuously, so any next experiment must keep the "
+        "kinetic read. Do NOT propose a single endpoint reading, and do not "
+        "propose dropping the early timepoints: viability is computed as "
+        "plateau minus baseline, and without the baseline window there is no "
+        "per-well correction. A flagged artifact is a reason to re-read the "
+        "well, not a reason to change the readout.\n\n"
+        "If the result you were given covers only one condition, or has no "
+        "vehicle control to normalise against, say that FIRST and in plain "
+        "words, because it is the one thing the user can act on immediately. "
+        "Do not bury it inside a mechanistic argument.\n\n"
+        "If the next experiment is the same one that was already designed, say "
+        "so explicitly and say what to change about how it is run, rather than "
+        "restating the design as though it were new.\n\n"
         "Update the thinking in light of the result. Output a JSON object:\n"
         '  "verdict": one of "supported" | "weakened" | "inconclusive",\n'
         '  "revised_hypothesis": a sharper hypothesis that accounts for this result '
         "(if weakened, pivot to the most plausible alternative mechanism or "
         "combination),\n"
         '  "rationale": two sentences on why,\n'
-        '  "next_experiment": the single most informative next test (runnable on '
-        "the same viability rig where possible).",
+        '  "next_experiment": the single most informative next test, runnable on '
+        "the rig described above.",
         role="generation", max_tokens=800, temperature=0.5,
     )
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import json
 from pathlib import Path
 
@@ -135,7 +136,11 @@ def evidence_record(m: dict, call: dict, *, hypothesis: str, drug: str,
     else:
         interpretation = (f"{call['verdict']}. Compare against a vehicle control "
                           "to call support/refute quantitatively.")
-        direction = "needs-control"
+        # The middle band, 40 to 80% of control, is a real partial effect.
+        # Calling it "needs-control" was misleading once a control had been
+        # supplied: nothing is missing, the answer is just equivocal, and a
+        # partial kill should not shift a ranking either way on its own.
+        direction = ("inconclusive" if pct is not None else "needs-control")
     return {
         "source": "alamarBlue viability assay (benchmate-demo rig)",
         "hypothesis_label": hypothesis,
@@ -221,3 +226,289 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# A whole plate in one file
+# ---------------------------------------------------------------------------
+# The rig reads one well at a time, so the original format was a single trace
+# and you typed the vehicle control's delta in by hand. That works, and it is
+# also a step where a demo goes wrong and where a real user transcribes the
+# wrong number. If the CSV carries a `condition` column, every arm and its
+# control travel together and the normalisation happens here.
+
+def has_conditions(path: str | Path) -> bool:
+    """True if the CSV distinguishes conditions, so it holds a whole plate."""
+    try:
+        with open(path, newline="") as f:
+            names = [c.lower().strip() for c in (csv.DictReader(f).fieldnames or [])]
+        return any(c in names for c in ("condition", "sample", "well", "group",
+                                        "treatment", "label"))
+    except Exception:
+        return False
+
+
+def read_plate(path: str | Path) -> dict[str, list[dict]]:
+    """Parse a multi-condition run into {condition: [{t_s, red_blue, R, G, B}]}.
+
+    Replicates of the same condition are averaged per timepoint, which is what
+    you want for a kinetic trace: three noisy wells give one usable curve.
+    """
+    C = ("condition", "sample", "well", "group", "treatment", "label")
+    by_cond: dict[str, dict[float, list[dict]]] = {}
+    with open(path, newline="") as f:
+        rd = csv.DictReader(f)
+        cols = {c.lower().strip(): c for c in (rd.fieldnames or [])}
+        cc = next((cols[k] for k in C if k in cols), None)
+        if not cc:
+            raise ValueError("No condition column; use read_run for a single trace.")
+        for r in rd:
+            try:
+                cond = (r[cc] or "").strip() or "unlabelled"
+                t = float(r["t_s"])
+                by_cond.setdefault(cond, {}).setdefault(t, []).append({
+                    "t_s": t,
+                    "red_blue": float(r["red_blue"]),
+                    "R": float(r.get("R", "nan") or "nan"),
+                    "G": float(r.get("G", "nan") or "nan"),
+                    "B": float(r.get("B", "nan") or "nan"),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    out: dict[str, list[dict]] = {}
+    for cond, per_t in by_cond.items():
+        rows = []
+        for t in sorted(per_t):
+            reps = per_t[t]
+            def mean(k):
+                vals = [x[k] for x in reps if x[k] == x[k]]   # drop NaN
+                return sum(vals) / len(vals) if vals else float("nan")
+            rows.append({"t_s": t, "red_blue": mean("red_blue"),
+                         "R": mean("R"), "G": mean("G"), "B": mean("B"),
+                         "n_replicates": len(reps)})
+        if rows:
+            out[cond] = rows
+    if not out:
+        raise ValueError("No usable rows (need t_s, red_blue, and a condition).")
+    return out
+
+
+def _is_blank(label: str) -> bool:
+    """True if this condition is a cell-free blank rather than a treatment arm.
+
+    A blank is medium plus dye with no cells in it. Nothing reduces the dye, so
+    whatever delta it shows is drift: evaporation, thermal shift, sensor creep.
+    Scoring it as a treatment arm produces the nonsense of a well with no cells
+    reported as a strong kill.
+    """
+    t = label.lower()
+    return any(n in t for n in ("blank", "no cells", "no-cell", "cell-free",
+                                "cell free", "medium only", "media only"))
+
+
+def _plate_control(conds) -> str | None:
+    """The vehicle control, by the names people actually use for it."""
+    for needle in ("vehicle", "dmso", "untreated", "no drug", "control"):
+        for c in conds:
+            if needle in c.lower() and not _is_blank(c):
+                return c
+    return None
+
+
+def analyse_plate(by_cond: dict[str, list[dict]]) -> dict:
+    """Metrics, audit and viability for every condition, normalised in-file.
+
+    Blank wells, if the plate has any, are subtracted from every delta before
+    normalisation. That is the step the printed protocol promises, and without
+    it the blank's own drift inflates every viability on the plate.
+    """
+    stats: dict[str, dict] = {}
+    for cond, rows in by_cond.items():
+        m = metrics(rows)
+        a = _audit.audit_run(rows)
+        stats[cond] = {"metrics": m, "audit": a, "is_blank": _is_blank(cond),
+                       "n_replicates": rows[0].get("n_replicates", 1)}
+
+    # Blank correction. Average the blanks, since a single cell-free well is as
+    # noisy as any other single well.
+    blanks = [c for c, s in stats.items() if s["is_blank"]]
+    blank_delta = None
+    if blanks:
+        usable = [stats[c]["metrics"]["delta"] for c in blanks
+                  if not stats[c]["audit"]["severe"]]
+        if usable:
+            blank_delta = sum(usable) / len(usable)
+
+    def corrected(cond: str) -> float:
+        d = stats[cond]["metrics"]["delta"]
+        return d - blank_delta if blank_delta is not None else d
+
+    ctrl = _plate_control(stats)
+    # A control with a severe artifact cannot normalise anything.
+    ctrl_delta = None
+    if ctrl and not stats[ctrl]["audit"]["severe"]:
+        ctrl_delta = corrected(ctrl)
+
+    for cond, s in stats.items():
+        if s["is_blank"]:
+            # Report the blank's drift so it is auditable, and do not pretend
+            # it has a viability.
+            s["viability"] = {
+                "verdict": "blank (no cells)", "viability_pct_of_control": None,
+                "delta": s["metrics"]["delta"],
+                "note": ("Cell-free well. Its delta is drift, and it has been "
+                         "subtracted from every other condition on this plate."),
+            }
+            continue
+        m = dict(s["metrics"])
+        m["delta"] = corrected(cond)
+        s["metrics"]["delta_blank_corrected"] = round(m["delta"], 4)
+        s["viability"] = viability_call(m, ctrl_delta)
+
+    return {"conditions": stats, "control": ctrl, "control_delta": ctrl_delta,
+            "blank_delta": round(blank_delta, 4) if blank_delta is not None else None,
+            "blanks": blanks}
+
+
+# Plate labels are abbreviated and design text is not. "Bortezomib 10 nM +
+# chloroquine 10 uM" has to match "BTZ 10nM + CQ 10uM", so match on drug
+# identity and on dose, not on shared words.
+_SYNONYMS = {
+    "bortezomib": {"bortezomib", "btz", "ps-341", "ps341", "velcade"},
+    "chloroquine": {"chloroquine", "cq", "cqd"},
+    "hydroxychloroquine": {"hydroxychloroquine", "hcq"},
+    "kifunensine": {"kifunensine", "kif"},
+    "carfilzomib": {"carfilzomib", "cfz", "kyprolis"},
+    "bafilomycin": {"bafilomycin", "baf", "bafa1"},
+    "staurosporine": {"staurosporine", "sts"},
+    "thapsigargin": {"thapsigargin", "tg"},
+    "mg132": {"mg132", "mg-132"},
+    "eeyarestatin": {"eeyarestatin", "esi", "eer1"},
+}
+_DOSE_RE = re.compile(r"([\d.]+)\s*(pm|nm|um|µm|mm)\b", re.I)
+
+
+def _drugs_in(text: str) -> set[str]:
+    t = str(text or "").lower()
+    return {canon for canon, alts in _SYNONYMS.items()
+            if any(re.search(rf"\b{re.escape(a)}\b", t) for a in alts)}
+
+
+def _dose_set(text: str) -> set[float]:
+    """Doses in nM, so 10 uM and 10000 nM compare equal."""
+    scale = {"pm": 1e-3, "nm": 1.0, "um": 1e3, "µm": 1e3, "mm": 1e6}
+    return {round(float(m.group(1)) * scale[m.group(2).lower()], 4)
+            for m in _DOSE_RE.finditer(str(text or ""))}
+
+
+def _match_condition(conds, drug: str) -> str | None:
+    """The condition that best matches the design's treatment string.
+
+    The design already says what is being tested, so use it rather than
+    assuming the most-killed arm is the interesting one. In a re-sensitisation
+    design the most-killed arm is usually the sensitive control line.
+
+    Scored on drugs matched first, then doses, so "BTZ 10nM + CQ 10uM" beats
+    "BTZ 10nM" for a design that names both compounds.
+    """
+    want_drugs = _drugs_in(drug)
+    want_doses = _dose_set(drug)
+    if not want_drugs:
+        return None
+    best, best_key = None, (0, 0)
+    for c in conds:
+        if _plate_control([c]) == c:          # never pick the vehicle
+            continue
+        key = (len(want_drugs & _drugs_in(c)), len(want_doses & _dose_set(c)))
+        if key > best_key:
+            best, best_key = c, key
+    # require every named compound to be present, so a single-agent arm is not
+    # chosen for a combination design
+    return best if best_key[0] >= len(want_drugs) else None
+
+
+def ingest_plate(csv_path, *, hypothesis: str, drug: str, cell: str,
+                 readout: str) -> dict:
+    """Read a whole-plate CSV and file it, normalising against its own control."""
+    by_cond = read_plate(csv_path)
+    res = analyse_plate(by_cond)
+    stats = res["conditions"]
+
+    headline = _match_condition(stats, drug)
+    lines = {c.split(" ")[0] for c in stats}
+    if headline is None and len(lines) == 1:
+        scored = [(k, v) for k, v in stats.items()
+                  if k != res["control"]
+                  and v["viability"].get("viability_pct_of_control") is not None]
+        if scored:
+            headline = min(
+                scored, key=lambda kv: kv[1]["viability"]["viability_pct_of_control"])[0]
+
+    if headline:
+        h = stats[headline]
+        rec = evidence_record(h["metrics"], h["viability"], hypothesis=hypothesis,
+                              drug=f"{drug} [{headline}]", cell=cell,
+                              readout=readout)
+        rec["audit"] = h["audit"]
+        if h["audit"]["severe"]:
+            rec["direction_for_benchmate"] = "needs-recheck"
+            rec["interpretation"] = ("ARTIFACT FLAGGED by the audit on this arm, "
+                                     "so it will not move any ranking until "
+                                     "re-run. " + rec["interpretation"])
+    else:
+        first = next(iter(stats.values()))
+        rec = evidence_record(first["metrics"], first["viability"],
+                              hypothesis=hypothesis, drug=drug, cell=cell,
+                              readout=readout)
+        rec["audit"] = {"severe": False, "flags": []}
+        rec["direction_for_benchmate"] = "no-change"
+        rec["interpretation"] = (
+            f"This plate covers more than one cell line "
+            f"({', '.join(sorted(lines))}) and no condition clearly matched the "
+            f"treatment in the design, so scoring one arm would be a guess. The "
+            f"per-condition table is the evidence; the feedback step reads it "
+            f"against your design.")
+
+    rec["assay"] = "viability-plate"
+    rec["headline_condition"] = headline
+    rec["control"] = res["control"]
+    rec["control_delta"] = res["control_delta"]
+    rec["conditions"] = {
+        c: {"delta": s["metrics"]["delta"],
+            "t_half_s": s["metrics"].get("t_half_s"),
+            "viability_pct": s["viability"].get("viability_pct_of_control"),
+            "verdict": s["viability"]["verdict"],
+            "n_replicates": s["n_replicates"],
+            "audit_flags": s["audit"]["flags"]}
+        for c, s in stats.items()}
+
+    RIG_DIR.mkdir(parents=True, exist_ok=True)
+    out = RIG_DIR / f"{hypothesis}_plate.json"
+    out.write_text(json.dumps(rec, indent=2))
+    rec["_path"] = str(out)
+    return rec
+
+
+def summarize_plate(rec: dict) -> str:
+    """The prompt block the feedback step reads for a whole plate."""
+    lines = [
+        f"alamarBlue viability plate on {rec['cell_line']}.",
+        f"Treatment under test: {rec['drug']}.",
+        f"Vehicle control: {rec.get('control')} "
+        f"(delta {rec.get('control_delta')}).",
+        f"Verdict on the tested arm: {rec['viability']['verdict']}.",
+        rec["interpretation"], "",
+        "Every condition on the plate, viability as % of the vehicle control:",
+    ]
+    rows = sorted(rec["conditions"].items(),
+                  key=lambda kv: (kv[1]["viability_pct"] is None,
+                                  kv[1]["viability_pct"] or 0))
+    for cond, s in rows:
+        v = s["viability_pct"]
+        lines.append(
+            f"  {cond}: {'control' if v is None else str(round(v)) + '%'}"
+            f", delta {s['delta']}, n={s['n_replicates']}"
+            + (f"  [AUDIT: {'; '.join(s['audit_flags'])}]"
+               if s["audit_flags"] else ""))
+    return "\n".join(lines)
