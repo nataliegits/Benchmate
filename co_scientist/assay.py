@@ -172,7 +172,20 @@ def summarize(rec: dict) -> str:
 
 def ingest(csv_path: str | Path, *, hypothesis: str, drug: str, cell: str,
            readout: str, control_delta: float | None = None) -> dict:
-    """Full pipeline: read → metrics → call → evidence record (written to rig/)."""
+    """Full pipeline: read → metrics → call → evidence record (written to rig/).
+
+    A whole-plate file handed to this function is delegated to `ingest_plate`
+    rather than read as one trace. `read_run` ignores the condition column, so
+    a 37-condition plate came back as a single 13,431-point series whose
+    baseline was the average of every well and whose "discontinuity at t=0" was
+    just the jump between one condition and the next. The agents then correctly
+    reported that there was no vehicle control to normalise against, because
+    from their side there was only one trace. Routing here means the caller
+    cannot get it wrong.
+    """
+    if has_conditions(csv_path):
+        return ingest_plate(csv_path, hypothesis=hypothesis, drug=drug,
+                            cell=cell, readout=readout)
     rows = read_run(csv_path)
     m = metrics(rows)
     call = viability_call(m, control_delta)
