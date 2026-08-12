@@ -275,10 +275,25 @@ def refine_hypothesis(hypothesis: str, result_summary: str,
             f"  Readout: {_s('readout')}\n"
             f"  Known confound: {_s('key_confound')}\n"
             f"  STATED LIMITATION: {_s('limitation')}\n\n"
-            "Hold the verdict to that limitation. If the assay could not have "
-            "established the mechanism either way, the honest verdict is "
-            "\"inconclusive\", not \"weakened\". Say plainly which part of the "
-            "hypothesis this result can and cannot speak to.\n\n")
+            "Hold the verdict to that limitation. An assay that could never have "
+            "established the mechanism has not weakened it.\n\n"
+            "Most hypotheses here have two parts: a prediction this assay CAN "
+            "test, usually a viability or dose-response claim, and a mechanistic "
+            "claim it cannot. Score those separately.\n"
+            "  * the testable prediction was met, mechanism out of reach\n"
+            "      -> \"supported in part\"\n"
+            "  * the testable prediction failed\n"
+            "      -> \"weakened\"\n"
+            "  * everything the assay could reach passed\n"
+            "      -> \"supported\"\n"
+            "  * the assay could not reach any part of it, or the data was not "
+            "usable\n"
+            "      -> \"inconclusive\"\n\n"
+            "Reserve \"inconclusive\" for a run that taught nothing. If a "
+            "pre-specified numeric criterion was met, the result is at least "
+            "\"supported in part\" no matter how much mechanism is still open. "
+            "Calling a met criterion inconclusive understates the run and is "
+            "the more misleading error of the two.\n\n")
     return call_json(
         f"Original hypothesis:\n{hypothesis}\n\n"
         f"{ctx}"
@@ -304,12 +319,21 @@ def refine_hypothesis(hypothesis: str, result_summary: str,
         "If the next experiment is the same one that was already designed, say "
         "so explicitly and say what to change about how it is run, rather than "
         "restating the design as though it were new.\n\n"
+        # Lead with the result. An earlier version of this prompt produced
+        # rationales that opened on what the assay could not do, which reads as
+        # a failed run even when a pre-specified criterion was met.
+        "Say what was learned BEFORE what was not. Open the rationale with the "
+        "number the experiment produced and whether it met the criterion. Put "
+        "the limits second, in one sentence. Never open on a limitation.\n\n"
         "Update the thinking in light of the result. Output a JSON object:\n"
-        '  "verdict": one of "supported" | "weakened" | "inconclusive",\n'
-        '  "revised_hypothesis": a sharper hypothesis that accounts for this result '
-        "(if weakened, pivot to the most plausible alternative mechanism or "
-        "combination),\n"
-        '  "rationale": two sentences on why,\n'
+        '  "verdict": one of "supported" | "supported in part" | "weakened" '
+        '| "inconclusive",\n'
+        '  "revised_hypothesis": a sharper hypothesis that accounts for this '
+        "result. Keep what the data supported, stated with its number, and "
+        "narrow what is still open. If weakened, pivot to the most plausible "
+        "alternative mechanism or combination,\n"
+        '  "rationale": two sentences. The first states the result and whether '
+        "it met the criterion. The second states what remains untested,\n"
         '  "next_experiment": the single most informative next test, runnable on '
         "the rig described above.",
         role="generation", max_tokens=800, temperature=0.5,
